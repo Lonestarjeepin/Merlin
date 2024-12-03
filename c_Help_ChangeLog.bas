@@ -319,37 +319,6 @@ Cells(r, 1) = "     Scale All Charts on Sheet"
 Cells(r, 2) = ""
 Cells(r, 3) = "Scales all Primary and Secondary axes of charts on the active sheet.  Does not play well with Stacked Column. If chart name contains the text 'NoScale' it will be skipped.  If chart name contains 'Split' the data points on the Primary Axis will be contained in top half of chart and data points in Secondary Axis will be contained in bottom half."
 
-''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
-''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
-''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
-
-r = r + 1
-r = r + 1
-Cells(r, 1).Font.Bold = True
-Cells(r, 1) = "Under Development (use at own risk)"
-Cells(r, 2) = ""
-Cells(r, 3) = "No documentation provided and no guarantee that these work."
-
-r = r + 1
-Cells(r, 1) = "User Defined Formulas"
-Cells(r, 2) = ""
-Cells(r, 3) = ""
-
-Cells(r, 1).Font.Bold = True
-Cells(r, 2).Font.Bold = True
-Cells(r, 3).Font.Bold = True
-
-r = r + 1
-Cells(r, 1) = "{=List_Unique}"
-Cells(r, 2) = ""
-Cells(r, 3) = "Lists only the unique entries in a range.  Must be entered as a CSE Array."
-
-r = r + 1
-Cells(r, 1) = "StockQuote"
-Cells(r, 2) = ""
-Cells(r, 3) = "Returns High, Low, Open, Close, Volume data for a given Ticker symbol"
-
-
 '*************************************************************************************************************************
 '*************************************************************************************************************************
 '*************************************************************************************************************************
