@@ -1,12 +1,3 @@
-VERSION 1.0 CLASS
-BEGIN
-  MultiUse = -1  'True
-END
-Attribute VB_Name = "ThisWorkbook"
-Attribute VB_GlobalNameSpace = False
-Attribute VB_Creatable = False
-Attribute VB_PredeclaredId = True
-Attribute VB_Exposed = True
 Private Sub Workbook_Open()
 
 DeleteMenu
@@ -57,10 +48,5 @@ Private Sub Workbook_AddinUninstall()
 Run "DeleteMenu"
 
 On Error Resume Next
-'Delete Old Menus
-
-Application.CommandBars("Worksheet Menu Bar").Controls("&Kyle's Hijacked Menu").Delete
-Application.CommandBars("Worksheet Menu Bar").Controls("&Kyle's Menu").Delete
 
 End Sub
-
