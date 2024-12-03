@@ -36,11 +36,9 @@ Application.OnKey "^+z", "GoBack"
 Application.OnKey "^+e", "Iferror"
 Application.OnKey "^+x", "IndexTrace"
 Application.OnKey "^+q", "CenterAcrossColumns"
-'Application.OnKey "^+v", "toggle_SmartView" 'boldselection"
 Application.OnKey "^+v", "Variance_Percent"
 Application.OnKey "^+W", "View_All_WorkSheets"
 Application.OnKey "^+U", "Unhide_Rehide_WS"
-'Application.OnKey "{F1}", "Help_Confirm"
 
         
 End Sub
