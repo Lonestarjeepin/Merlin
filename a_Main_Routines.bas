@@ -1427,7 +1427,7 @@ Sub boldselection()
             Z = False
         End If
         If Mid(txt, y, 1) = Chr(10) Then
-            If Mid(txt, y + 1, 4) = "   •" Then
+            If Mid(txt, y + 1, 4) = "   Â•" Then
                 Z = False
             Else
                 Z = True
@@ -1935,7 +1935,7 @@ End Sub
 
 Sub Merlin_Support()
 'opens Merlin Add-In forum in default browser
-    ActiveWorkbook.FollowHyperlink "https://groups.google.com/forum/#!forum/merlin-add-in"
+    ActiveWorkbook.FollowHyperlink "https://github.com/Lonestarjeepin/Merlin"
 
 End Sub
 
