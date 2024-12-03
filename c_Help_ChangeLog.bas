@@ -1,4 +1,3 @@
-Attribute VB_Name = "c_Help_ChangeLog"
 Sub ChangeLog()
 Application.ScreenUpdating = False
 If Evaluate("ISREF(Merlin_ChangeLog!A1)") = True Then
@@ -120,7 +119,7 @@ Cells(r, 3) = "Self-explanatory, but alters visual formatting of numbers for con
 r = r + 1
 Cells(r, 1) = "     Basis Point Format"
 Cells(r, 2) = ""
-Cells(r, 3) = "Replaces value or formula with formula that multiplies by 10,000 and adds ""bps"" to formatting. (ex. 0.05% will be multiplied by 10,000 and read ""5 bpsî)."
+Cells(r, 3) = "Replaces value or formula with formula that multiplies by 10,000 and adds ""bps"" to formatting. (ex. 0.05% will be multiplied by 10,000 and read ""5 bps‚Äù)."
 
 r = r + 1
 Cells(r, 1) = "     Ordinal Number Format"
