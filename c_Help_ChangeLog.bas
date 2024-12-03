@@ -27,17 +27,17 @@ Cells(r, 3).Font.Bold = True
 r = r + 1
 Cells(r, 1) = "Merlin"
 Cells(r, 2) = ""
-Cells(r, 3) = "Merlin was originally created by Kyle Whitmire, but has had many contributors over the years with a special thanks to Daniel Whiteman who contributed much better VBA code than Kyle.  Much of the code is not my own, but was 'stolen' from the web. I've attempted to leave credit to the original author in the comments where large chunks of code were used."
+Cells(r, 3) = "Merlin was originally created by Kyle W., but has had many contributors over the years with a special thanks to Daniel W. who contributed much better VBA code than Kyle.  Much of the code is not my own, but was 'borrowed' from the web. I've attempted to leave credit to the original author in the comments where large chunks of code were used."
 
 r = r + 1
 Cells(r, 1) = "Update Merlin"
 Cells(r, 2) = ""
-Cells(r, 3) = "Checks for new version of Merlin online (https://merlinaddin.xyz) and updates local copy accordingly."
+Cells(r, 3) = "Checks for new version of Merlin online (https://github.com/Lonestarjeepin/Merlin/blob/main/Merlin.xlam) and updates local copy accordingly."
 
 r = r + 1
 Cells(r, 1) = "Merlin Support"
 Cells(r, 2) = ""
-Cells(r, 3) = "Google Groups forum to ask questions, submit suggestions, or to upload code for bug fix or enhancements. URL: https://groups.google.com/forum/#!forum/merlin-add-in."
+Cells(r, 3) = "GitHub forum to ask questions, submit suggestions, or to upload code for bug fix or enhancements. URL: https://github.com/Lonestarjeepin/Merlin."
 
 r = r + 1
 Cells(r, 1).Font.Bold = True
