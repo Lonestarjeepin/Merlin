@@ -9,7 +9,7 @@ The Merlin Excel add-in was created to supplement Excel with many frequently-nee
   Once the file is downloaded, open Excel, go to Options, Add-Ins, then click the Go button next to Manage: Excel add-ins.  Click Browse to find the location where you saved the .xlam file, select the Merlin.xlam file, and click OK.  In Excel, you should now see an Add-ins menu item and Merlin will be present.
 
 **Update:**
-  Click the Update Merlin menu item in Merlin.  Your verison will be compared to the latest version in GitHub.  If there is a new version, it will be downloaded and installed.  Simply restart Excel to use the new version.
+  Click the Update Merlin menu item in Merlin.  Your verison will be compared to the latest release version in GitHub.  If there is a new version, it will be downloaded and installed.  Simply restart Excel to use the new version.
 
 **First Usage:**
   If you are new to Merlin, click "Merlin ChangeLog annd Help" within the add-in and a new worksheet will be created that lists and explains many of the features of the tool.
