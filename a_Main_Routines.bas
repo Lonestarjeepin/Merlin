@@ -22,11 +22,27 @@
 '    End If
 'End Sub
 
+'**** For Calculation Timers ****
+Private Declare PtrSafe Function getFrequency Lib "kernel32" _
+Alias "QueryPerformanceFrequency" (cyFrequency As Currency) As LongPtr
+Private Declare PtrSafe Function getTickCount Lib "kernel32" _
+Alias "QueryPerformanceCounter" (cyTickCount As Currency) As LongPtr
 
+'**** For Go To Precedent Timers ****
 Public varGoBack_ws As String
 Public varGoBack_rng As String
 Public varGoback_WB As String
-Public varF1_Delay As String
+
+'***** For Scale Chart *****
+Public Type scaleAxisScale
+  ' Calculated Axis Scale Parameters
+  dMin As Double
+  dMax As Double
+  dMajor As Double
+  dMinor As Double
+End Type
+
+
 Public FindFormulaToggle As Integer
 'Public Const vbDoubleQuote As String = Chr(34) '"""" 'represents 1 double quote (")
 Public colHiddenWS As New Collection
@@ -778,8 +794,8 @@ Application.ScreenUpdating = False
 
 Dim wb As Workbook
 Dim myFileName As String
-Dim FilePath As String
-FilePath = ActiveWorkbook.Path
+Dim filePath As String
+filePath = ActiveWorkbook.Path
 Dim FileNm As String
 'FileNm = ActiveWorkbook.Name
 FileNm = Left(ActiveWorkbook.Name, (InStrRev(ActiveWorkbook.Name, ".", -1, vbTextCompare) - 1))
@@ -814,7 +830,7 @@ Loop
 
 
 myFileName = "Upload_" & FileNm & "_" & Format(Now(), "mmddyy")
-ChDir FilePath
+ChDir filePath
 Application.Dialogs(xlDialogSaveAs).Show myFileName, 51
 
 '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
@@ -1426,7 +1442,7 @@ Sub boldselection()
             Z = False
         End If
         If Mid(txt, y, 1) = Chr(10) Then
-            If Mid(txt, y + 1, 4) = "   " Then
+            If Mid(txt, y + 1, 4) = "   •" Then
                 Z = False
             Else
                 Z = True
@@ -2085,10 +2101,6 @@ End Sub
 '*********************************
 
 
-Private Declare PtrSafe Function getFrequency Lib "kernel32" _
-Alias "QueryPerformanceFrequency" (cyFrequency As Currency) As LongPtr
-Private Declare PtrSafe Function getTickCount Lib "kernel32" _
-Alias "QueryPerformanceCounter" (cyTickCount As Currency) As LongPtr
 '
 Function MicroTimer() As Double
 '
@@ -2132,7 +2144,7 @@ Sub DoCalcTimer(jMethod As LongPtr)
     Dim oCell As Range
     Dim oArrRange As Range
     Dim sCalcType As String
-    Dim lCalcSave As LongPtr
+    Dim lCalcSave As XlCalculation
     Dim bIterSave As Boolean
     '
     On Error GoTo Errhandl
@@ -2229,7 +2241,7 @@ Sub DoCalcTimer(jMethod As LongPtr)
 
     On Error GoTo 0
 
-    dTime = Round(dTime, 5) / 5
+    dTime = Application.WorksheetFunction.Round(dTime, 5) / 5
     MsgBox sCalcType & " " & CStr(dTime) & " Seconds", _
         vbOKOnly + vbInformation, "CalcTimer"
 
@@ -2403,6 +2415,10 @@ Sub AllInternalPasswords()
     
 '**************************************** End Crack Passwords ********************************************
 
+
+
+
+
 '**********************************************************************************************************************
 '**********************************************************************************************************************
 '**********************************************************************************************************************
@@ -2414,15 +2430,9 @@ Sub AllInternalPasswords()
 '**********************************************************************************************************************
 'Option Explicit
 
-Public Type scaleAxisScale
-  ' Calculated Axis Scale Parameters
-  dMin As Double
-  dMax As Double
-  dMajor As Double
-  dMinor As Double
-End Type
 
-Function fnAxisScale(ByVal dMin As Double, ByVal dMax As Double) As scaleAxisScale
+
+Public Function fnAxisScale(ByVal dMin As Double, ByVal dMax As Double) As scaleAxisScale
   ' Calculates tidy settings for the chart axes
   Dim dPower As Double, dScale As Double, dSmall As Double, dTemp As Double
 
@@ -2548,7 +2558,7 @@ Sub ScaleChartAxes(cht As Chart)
       Set srs = .SeriesCollection(iSeries)
         'find Primary Axis values
         If .SeriesCollection(iSeries).AxisGroup = xlPrimary Then
-          vPValues = srs.Values
+          vPValues = srs.values
 
             If iSeries = 1 Then
                 dPMin = vPValues(1)
@@ -2563,7 +2573,7 @@ Sub ScaleChartAxes(cht As Chart)
         End If
         'KW - find Secondary axis values
         If .SeriesCollection(iSeries).AxisGroup = xlSecondary Then
-          vSValues = srs.Values
+          vSValues = srs.values
 
             If iSeries = 1 Then
                 dSMin = vSValues(1)
@@ -2654,3 +2664,284 @@ End Sub
 '**********************************************************************************************************************
 '**********************************************************************************************************************
 '**********************************************************************************************************************
+
+Sub HighlightContributingCells()
+    Dim formulaCell As Range
+    Dim formulaText As String
+    Dim sumRange As Range
+    Dim criteriaRange As Range
+    Dim criteriaRanges() As Range
+    Dim criteriaOperators() As String
+    Dim criteriaValues() As String
+    Dim cell As Range
+    Dim formulaParts() As String
+    Dim i As Long, j As Long, k As Long
+    Dim sumRangeAddress As String
+    Dim criteriaRangeAddress As String
+    Dim criteria As String
+    Dim operatorPos As Long
+    Dim comparisonOperator As String
+    Dim criteriaValue As String
+    Dim validCriteria As Boolean
+    Dim isSUMIF As Boolean
+    Dim isCOUNTIF As Boolean
+    
+    ' Get user input for the formula cell
+    On Error Resume Next
+    Set formulaCell = Application.InputBox("Select the cell containing the SUMIF/SUMIFS/COUNTIF/COUNTIFS formula:", Type:=8)
+    On Error GoTo 0
+    If formulaCell Is Nothing Then Exit Sub
+    
+    ' Extract formula text
+    formulaText = formulaCell.Formula
+    
+    ' Debug: Print formula text
+    Debug.Print "Formula Text: " & formulaText
+    
+    ' Check if the formula is SUMIF, SUMIFS, COUNTIF, or COUNTIFS
+    isSUMIF = InStr(formulaText, "SUMIF(") > 0 And InStr(formulaText, "SUMIFS(") = 0
+    isCOUNTIF = InStr(formulaText, "COUNTIF(") > 0 And InStr(formulaText, "COUNTIFS(") = 0
+    
+    If isSUMIF Or isCOUNTIF Then
+        ' Handle SUMIF or COUNTIF
+        formulaParts = Split(Mid(formulaText, InStr(1, formulaText, "(") + 1, Len(formulaText) - InStr(1, formulaText, "(") - 1), ",")
+        
+        ' Extract criteria range (first argument)
+        criteriaRangeAddress = Trim(formulaParts(0))
+        Set criteriaRange = Range(criteriaRangeAddress)
+        ' Debug: Print criteria range address
+        Debug.Print "Criteria Range: " & criteriaRange.Address
+        
+        ' Extract criteria (second argument)
+        criteria = Trim(formulaParts(1))
+        criteria = Replace(criteria, """", "")
+        
+        ' Extract sum range (third argument, optional for SUMIF)
+        If isSUMIF And UBound(formulaParts) >= 2 Then
+            sumRangeAddress = Trim(formulaParts(2))
+            Set sumRange = Range(sumRangeAddress)
+        Else
+            Set sumRange = criteriaRange
+        End If
+        ' Debug: Print sum range address
+        Debug.Print "Sum Range: " & sumRange.Address
+        
+        ' Identify and extract the comparison operator and criteria value
+        If Left(criteria, 2) = "<>" Or Left(criteria, 2) = "<=" Or Left(criteria, 2) = ">=" Then
+            comparisonOperator = Left(criteria, 2)
+            criteriaValue = Mid(criteria, 3)
+        ElseIf Left(criteria, 1) = "=" Or Left(criteria, 1) = "<" Or Left(criteria, 1) = ">" Then
+            comparisonOperator = Left(criteria, 1)
+            criteriaValue = Mid(criteria, 2)
+        Else
+            comparisonOperator = "="
+            criteriaValue = criteria
+        End If
+        
+        ' Debug: Print comparison operator and criteria value
+        Debug.Print "Comparison Operator: " & comparisonOperator
+        Debug.Print "Criteria Value: " & criteriaValue
+        
+        ' Evaluate and highlight cells
+        For i = 1 To criteriaRange.Cells.Count
+            ' Compare values, considering both numeric and string comparisons
+            Select Case comparisonOperator
+                Case "="
+                    If IsNumeric(criteriaValue) Then
+                        If criteriaRange.Cells(i).Value = Val(criteriaValue) Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    Else
+                        If criteriaRange.Cells(i).Value = criteriaValue Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    End If
+                Case "<"
+                    If IsNumeric(criteriaValue) Then
+                        If criteriaRange.Cells(i).Value < Val(criteriaValue) Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    Else
+                        If criteriaRange.Cells(i).Value < criteriaValue Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    End If
+                Case ">"
+                    If IsNumeric(criteriaValue) Then
+                        If criteriaRange.Cells(i).Value > Val(criteriaValue) Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    Else
+                        If criteriaRange.Cells(i).Value > criteriaValue Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    End If
+                Case "<="
+                    If IsNumeric(criteriaValue) Then
+                        If criteriaRange.Cells(i).Value <= Val(criteriaValue) Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    Else
+                        If criteriaRange.Cells(i).Value <= criteriaValue Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    End If
+                Case ">="
+                    If IsNumeric(criteriaValue) Then
+                        If criteriaRange.Cells(i).Value >= Val(criteriaValue) Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    Else
+                        If criteriaRange.Cells(i).Value >= criteriaValue Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    End If
+                Case "<>"
+                    If IsNumeric(criteriaValue) Then
+                        If criteriaRange.Cells(i).Value <> Val(criteriaValue) Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    Else
+                        If criteriaRange.Cells(i).Value <> criteriaValue Then
+                            criteriaRange.Rows(i).Interior.Color = vbGreen
+                        End If
+                    End If
+            End Select
+        Next i
+    ElseIf InStr(formulaText, "SUMIFS(") > 0 Or InStr(formulaText, "COUNTIFS(") > 0 Then
+        ' Handle SUMIFS or COUNTIFS
+        formulaParts = Split(Mid(formulaText, InStr(1, formulaText, "(") + 1, Len(formulaText) - InStr(1, formulaText, "(") - 1), ",")
+        
+        ' Extract sum range (first argument for SUMIFS, not used for COUNTIFS)
+        If InStr(formulaText, "SUMIFS(") > 0 Then
+            sumRangeAddress = Trim(formulaParts(0))
+            Set sumRange = Range(sumRangeAddress)
+            ' Debug: Print sum range address
+            Debug.Print "Sum Range: " & sumRange.Address
+        Else
+            Set sumRange = Nothing
+        End If
+        
+        ' Initialize arrays
+        ReDim criteriaRanges((UBound(formulaParts) - 1) \ 2)
+        ReDim criteriaOperators((UBound(formulaParts) - 1) \ 2)
+        ReDim criteriaValues((UBound(formulaParts) - 1) \ 2)
+        
+        ' Extract criteria ranges and criteria values
+        For i = IIf(InStr(formulaText, "SUMIFS(") > 0, 1, 0) To UBound(formulaParts) Step 2
+            criteriaRangeAddress = Trim(formulaParts(i))
+            Set criteriaRanges((i - IIf(InStr(formulaText, "SUMIFS(") > 0, 1, 0)) \ 2) = Range(criteriaRangeAddress)
+            ' Debug: Print criteria range address
+            Debug.Print "Criteria Range: " & criteriaRanges((i - IIf(InStr(formulaText, "SUMIFS(") > 0, 1, 0)) \ 2).Address
+            
+            criteria = Trim(formulaParts(i + 1))
+            criteria = Replace(criteria, """", "")
+            
+            ' Identify and extract the comparison operator and criteria value
+            If Left(criteria, 2) = "<>" Or Left(criteria, 2) = "<=" Or Left(criteria, 2) = ">=" Then
+                comparisonOperator = Left(criteria, 2)
+                criteriaValue = Mid(criteria, 3)
+            ElseIf Left(criteria, 1) = "=" Or Left(criteria, 1) = "<" Or Left(criteria, 1) = ">" Then
+                comparisonOperator = Left(criteria, 1)
+                criteriaValue = Mid(criteria, 2)
+            Else
+                comparisonOperator = "="
+                criteriaValue = criteria
+            End If
+            
+            criteriaOperators((i - IIf(InStr(formulaText, "SUMIFS(") > 0, 1, 0)) \ 2) = comparisonOperator
+            criteriaValues((i - IIf(InStr(formulaText, "SUMIFS(") > 0, 1, 0)) \ 2) = criteriaValue
+            
+            ' Debug: Print comparison operator and criteria value
+            Debug.Print "Comparison Operator: " & comparisonOperator
+            Debug.Print "Criteria Value: " & criteriaValue
+        Next i
+        
+        ' Evaluate and highlight cells
+        For i = 1 To criteriaRanges(0).Cells.Count
+            validCriteria = True
+            For j = 0 To UBound(criteriaRanges)
+                Set criteriaRange = criteriaRanges(j)
+                comparisonOperator = criteriaOperators(j)
+                criteriaValue = criteriaValues(j)
+                
+                ' Compare values, considering both numeric and string comparisons
+                Select Case comparisonOperator
+                    Case "="
+                        If IsNumeric(criteriaValue) Then
+                            If Not criteriaRange.Cells(i).Value = Val(criteriaValue) Then
+                                validCriteria = False
+                            End If
+                        Else
+                            If Not criteriaRange.Cells(i).Value = criteriaValue Then
+                                validCriteria = False
+                            End If
+                        End If
+                    Case "<"
+                        If IsNumeric(criteriaValue) Then
+                            If Not criteriaRange.Cells(i).Value < Val(criteriaValue) Then
+                                validCriteria = False
+                            End If
+                        Else
+                            If Not criteriaRange.Cells(i).Value < criteriaValue Then
+                                validCriteria = False
+                            End If
+                        End If
+                    Case ">"
+                        If IsNumeric(criteriaValue) Then
+                            If Not criteriaRange.Cells(i).Value > Val(criteriaValue) Then
+                                validCriteria = False
+                            End If
+                        Else
+                            If Not criteriaRange.Cells(i).Value > criteriaValue Then
+                                validCriteria = False
+                            End If
+                        End If
+                    Case "<="
+                        If IsNumeric(criteriaValue) Then
+                            If Not criteriaRange.Cells(i).Value <= Val(criteriaValue) Then
+                                validCriteria = False
+                            End If
+                        Else
+                            If Not criteriaRange.Cells(i).Value <= criteriaValue Then
+                                validCriteria = False
+                            End If
+                        End If
+                    Case ">="
+                        If IsNumeric(criteriaValue) Then
+                            If Not criteriaRange.Cells(i).Value >= Val(criteriaValue) Then
+                                validCriteria = False
+                            End If
+                        Else
+                            If Not criteriaRange.Cells(i).Value >= criteriaValue Then
+                                validCriteria = False
+                            End If
+                        End If
+                    Case "<>"
+                        If IsNumeric(criteriaValue) Then
+                            If Not criteriaRange.Cells(i).Value <> Val(criteriaValue) Then
+                                validCriteria = False
+                            End If
+                        Else
+                            If Not criteriaRange.Cells(i).Value <> criteriaValue Then
+                                validCriteria = False
+                            End If
+                        End If
+                End Select
+                If Not validCriteria Then Exit For
+            Next j
+            If validCriteria Then
+                ' Highlight all columns in the evaluated row
+                For k = 0 To UBound(criteriaRanges)
+                    criteriaRanges(k).Rows(i).Interior.Color = vbGreen
+                Next k
+                If Not sumRange Is Nothing Then
+                    sumRange.Rows(i).Interior.Color = vbGreen
+                End If
+            End If
+        Next i
+    Else
+        MsgBox "The formula is not a SUMIF, SUMIFS, COUNTIF, or COUNTIFS formula. This code currently only supports SUMIF, SUMIFS, COUNTIF, and COUNTIFS."
+    End If
+    ' --- End of adaptation section ---
+End Sub
