@@ -1,3 +1,4 @@
+
 '*****************************************************************
 'Code for Add-In Menu Dropdown
 '*****************************************************************
@@ -278,6 +279,11 @@ Dim cbcCustomChartMenu As CommandBarControl
                 .Caption = "Crack Internal Passwords"
                 .OnAction = "AllInternalPasswords"
             End With
+
+            With .Controls.Add(Type:=msoControlButton)
+                .Caption = "Highlight Contributing Cells (SUMIFS/COUNTIFS)"
+                .OnAction = "HighlightContributingCells"
+            End With
             
             With .Controls.Add(Type:=msoControlButton)
                 .Caption = "Find Errors in Formulas"
@@ -407,13 +413,13 @@ Dim cbcCustomChartMenu As CommandBarControl
 '
 '        Set subDevMenu = cbcCustomMenu.Controls.Add(Type:=msoControlPopup)
 '        subDevMenu.Caption = "Under Development (use at own risk)"
-'
-'    'Menu items contained in sub-menu
+
+    'Menu items contained in sub-menu
 '        With subDevMenu
-'
+
 '            With .Controls.Add(Type:=msoControlButton)
-'                .Caption = "JSON Stock Quotes"
-'                .OnAction = "GetYahooDataFromJSON"
+'                .Caption = "Find Numbers in SUM"
+'                .OnAction = "FindNumSub"
 '            End With
 '
 '            With .Controls.Add(Type:=msoControlButton)
