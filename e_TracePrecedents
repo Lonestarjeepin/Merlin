@@ -1,7 +1,7 @@
 '==================================================================================================
 ' SMART PRECEDENT TRACER
 '
-' Original code by Kyle Whitmire, Bill Manville, et al., refactored in 2025 with help from Gemeni to include IF, XLOOKUP, and HLOOKUP as well as http:// support
+' Original code by Kyle Whitmire, Bill Manville, et al., refactored in 2025 with help from Gemini 2.5 Pro to include IF, XLOOKUP, and HLOOKUP as well as http:// support
 '
 ' Description:
 ' This module provides a robust tool to trace formula precedents
@@ -10,7 +10,7 @@
 Option Explicit
 
 '==================================================================================================
-'   DECLARATIONS (Must be at the top of the module)
+'    DECLARATIONS (Must be at the top of the module)
 '==================================================================================================
 
 Public varGoBack_ws As String
@@ -32,7 +32,7 @@ Public UnhiddenSheets As Collection
 Const VK_SHIFT As Long = &H10 ' Virtual-Key code for the SHIFT key
 
 '==================================================================================================
-'   PRIMARY AND PUBLIC-FACING SUBROUTINES
+'    PRIMARY AND PUBLIC-FACING SUBROUTINES
 '==================================================================================================
 
 Public Sub TracePrecedents()
@@ -128,7 +128,7 @@ End Sub
 
 
 '==================================================================================================
-'   TRACING LOGIC & HELPERS
+'    TRACING LOGIC & HELPERS
 '==================================================================================================
 
 Private Function OpenAndRestart(ByVal sourceCell As Range) As Boolean
@@ -291,24 +291,37 @@ errcatch:
 End Sub
 
 Private Sub TraceExternalNamedRange(ByVal sourceCell As Range)
+    ' FIX: This routine now handles both external named ranges AND direct external cell references.
     Dim wbName As String, rangeName As String, targetRange As Range
     wbName = ParseWbNameFromFormula(sourceCell.Formula)
     rangeName = Mid(sourceCell.Formula, InStr(1, sourceCell.Formula, "!") + 1)
     
     If wbName <> "" And rangeName <> "" Then
+        ' First, attempt to resolve the reference as a named range.
         On Error Resume Next
         Set targetRange = Workbooks(wbName).Names(rangeName).RefersToRange
-        On Error GoTo 0
+        On Error GoTo 0 ' Reset error handling
+        
         If Not targetRange Is Nothing Then
+            ' Success! It was a valid named range. Navigate to it.
             NavigateToCell targetRange
         Else
-            MsgBox "Could not find the named range '" & rangeName & "' in " & wbName & ".", vbExclamation
+            ' It was not a named range, so it must be a direct cell reference.
+            ' Fall back to the standard arrow tracer, which can handle this case.
+            TraceByArrows sourceCell
         End If
+    Else
+        ' If the formula couldn't be parsed, fall back to the arrow tracer for safety.
+        TraceByArrows sourceCell
     End If
 End Sub
 
 Private Function IsSimpleExternalNameFormula(ByVal formulaStr As String) As Boolean
-    If (UCase(formulaStr) Like "='*\[*]*'!*" Or UCase(formulaStr) Like "=*!*") And _
+    ' FIX: This function was too broad and incorrectly caught simple cross-sheet references (e.g., =Sheet1!D5).
+    ' It's now restricted to only identify formulas that contain an external workbook link, which is
+    ' reliably indicated by the presence of both "!" and "[" characters, while not being part of a function call.
+    If InStr(1, formulaStr, "!") > 0 And _
+       InStr(1, formulaStr, "[") > 0 And _
        InStr(1, formulaStr, "(") = 0 Then
         IsSimpleExternalNameFormula = True
     End If
@@ -477,3 +490,4 @@ Private Sub NavigateToCell(ByVal target As Range)
     Application.Goto Reference:=target, Scroll:=(Not isVisible)
     ActiveCell.Activate
 End Sub
+
