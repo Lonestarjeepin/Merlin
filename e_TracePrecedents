@@ -1,0 +1,479 @@
+'==================================================================================================
+' SMART PRECEDENT TRACER
+'
+' Original code by Kyle Whitmire, Bill Manville, et al., refactored in 2025 with help from Gemeni to include IF, XLOOKUP, and HLOOKUP as well as http:// support
+'
+' Description:
+' This module provides a robust tool to trace formula precedents
+'==================================================================================================
+
+Option Explicit
+
+'==================================================================================================
+'   DECLARATIONS (Must be at the top of the module)
+'==================================================================================================
+
+Public varGoBack_ws As String
+Public varGoBack_rng As String
+Public varGoback_WB As String
+
+Private Type PrecedentInfo
+    Address As String
+End Type
+
+Public UnhiddenSheets As Collection
+
+' API declaration to check keyboard state
+#If VBA7 Then
+    Declare PtrSafe Function GetKeyState Lib "user32" (ByVal nVirtKey As Long) As Integer
+#Else
+    Declare Function GetKeyState Lib "user32" (ByVal nVirtKey As Long) As Integer
+#End If
+Const VK_SHIFT As Long = &H10 ' Virtual-Key code for the SHIFT key
+
+'==================================================================================================
+'   PRIMARY AND PUBLIC-FACING SUBROUTINES
+'==================================================================================================
+
+Public Sub TracePrecedents()
+    Static bGoBackSet As Boolean
+    
+RestartProcess:
+    On Error GoTo errcatch
+    Application.ScreenUpdating = False
+    
+    Dim startCell As Range
+    Set startCell = ActiveCell
+
+    If Not bGoBackSet Then
+        If Not startCell.HasFormula Then
+            MsgBox "The active cell does not contain a formula.", vbInformation
+            GoTo cleanup
+        End If
+        varGoback_WB = startCell.Worksheet.Parent.Name
+        varGoBack_ws = startCell.Worksheet.Name
+        varGoBack_rng = startCell.Address
+        bGoBackSet = True
+        Set UnhiddenSheets = New Collection
+    End If
+
+    ' PASS 1 & 2: Resolve Named Ranges & Open Files
+    If OpenAndRestart(startCell) Then
+        GoTo RestartProcess
+    End If
+    
+    ' PASS 3: Activate Target Workbook and Prepare Sheets
+    Dim wbName As String, wb As Workbook
+    wbName = ParseWbNameFromFormula(GetFormulaWithResolvedNames(startCell))
+    If wbName = "" Then wbName = ParseWbNameFromFormula(startCell.Formula)
+    
+    If wbName <> "" Then
+        On Error Resume Next
+        Set wb = Application.Workbooks(wbName)
+        If Not wb Is Nothing Then
+            wb.Activate
+            UnhideAllSheetsInWorkbook wb
+            Workbooks(varGoback_WB).Activate
+        End If
+        On Error GoTo errcatch
+    End If
+    UnhideAllSheetsInWorkbook Workbooks(varGoback_WB)
+
+    ' PASS 4: Dispatch to the Correct Tracer
+    Dim trimmedFormula As String: trimmedFormula = LTrim(startCell.Formula)
+    If Left(trimmedFormula, 1) = "=" Then trimmedFormula = Mid(trimmedFormula, 2)
+    
+    ' Highest priority: check for simple external named range links, which can fail with standard tracers
+    If IsSimpleExternalNameFormula(startCell.Formula) Then
+        TraceExternalNamedRange startCell
+    ElseIf UCase(trimmedFormula) Like "IF(*" Then
+        TraceIfStatement sourceCell:=startCell
+    Else
+        Dim foundFunction As String, functionsToSearch As Variant, func As Variant
+        functionsToSearch = Array("INDEX", "VLOOKUP", "HLOOKUP", "XLOOKUP")
+        For Each func In functionsToSearch
+            If InStr(1, UCase(startCell.Formula), UCase(func) & "(") > 0 Then
+                foundFunction = func
+                Exit For
+            End If
+        Next func
+
+        If Len(foundFunction) > 0 Then
+            TraceByParsing aFunction:=foundFunction, sourceCell:=startCell
+        Else
+            TraceByArrows sourceCell:=startCell
+        End If
+    End If
+    
+    GoTo cleanup
+
+errcatch:
+    MsgBox "An unexpected error occurred: " & vbCrLf & Err.Description, vbCritical, "Trace Error"
+    
+cleanup:
+    RestoreHiddenSheets
+    bGoBackSet = False
+    Application.ScreenUpdating = True
+End Sub
+
+Sub GoBack()
+    On Error Resume Next
+    If Len(varGoback_WB) > 0 And Len(varGoBack_ws) > 0 And Len(varGoBack_rng) > 0 Then
+        Workbooks(varGoback_WB).Activate
+        Worksheets(varGoBack_ws).Activate
+        Worksheets(varGoBack_ws).Range(varGoBack_rng).Select
+    End If
+    On Error GoTo 0
+End Sub
+
+
+'==================================================================================================
+'   TRACING LOGIC & HELPERS
+'==================================================================================================
+
+Private Function OpenAndRestart(ByVal sourceCell As Range) As Boolean
+    ' This function checks for external links and opens the file if necessary.
+    ' It also checks the resolved formula for named ranges.
+    Dim formulaToCheck As String
+    formulaToCheck = GetFormulaWithResolvedNames(sourceCell)
+
+    On Error Resume Next
+    Dim linkSources As Variant: linkSources = Workbooks(varGoback_WB).linkSources(xlExcelLinks)
+    On Error GoTo 0
+    If IsEmpty(linkSources) Then Exit Function
+
+    Dim link As Variant, wb As Workbook
+    For Each link In linkSources
+        Dim linkFileName As String: linkFileName = GetFileNameFromPath(CStr(link))
+        
+        ' Check if this specific filename appears anywhere in the formula (direct or via named range).
+        If InStr(1, formulaToCheck, linkFileName, vbTextCompare) > 0 Then
+            If IsWorkbookOpen(linkFileName) = False Then
+                Do While ShiftPressed(): DoEvents: Loop
+                On Error Resume Next
+                Workbooks.Open fileName:=CStr(link), UpdateLinks:=0
+                If Err.Number = 0 Then
+                    Workbooks(varGoback_WB).Activate
+                    OpenAndRestart = True ' Signal a restart
+                    Exit Function
+                Else
+                    MsgBox "Could not open the required file:" & vbCrLf & link, vbExclamation
+                End If
+                On Error GoTo 0
+            End If
+        End If
+    Next link
+End Function
+
+Private Sub TraceIfStatement(ByVal sourceCell As Range)
+    Dim allArgs As Variant, originalFormula As String
+    originalFormula = sourceCell.Formula
+    On Error GoTo RestoreFormula
+    allArgs = ParseFormulaArguments(originalFormula, InStr(1, originalFormula, "IF(", vbTextCompare))
+    If IsEmpty(allArgs) Or UBound(allArgs) < 1 Then
+        TraceByArrows sourceCell: GoTo RestoreFormula
+    End If
+    Dim conditionStr As String, truePartStr As String, falsePartStr As String, activeBranchStr As String
+    conditionStr = allArgs(0)
+    truePartStr = allArgs(1)
+    If UBound(allArgs) >= 2 Then falsePartStr = allArgs(2) Else falsePartStr = "0"
+    Dim conditionResult As Variant
+    On Error Resume Next
+    conditionResult = sourceCell.Worksheet.Evaluate(conditionStr)
+    On Error GoTo RestoreFormula
+    If IsError(conditionResult) Or VarType(conditionResult) <> vbBoolean Then
+        TraceByArrows sourceCell: GoTo RestoreFormula
+    End If
+    If CBool(conditionResult) Then activeBranchStr = truePartStr Else activeBranchStr = falsePartStr
+    sourceCell.Formula = "=" & activeBranchStr
+    Dim foundFunction As String, functionsToSearch As Variant, func As Variant
+    functionsToSearch = Array("INDEX", "VLOOKUP", "HLOOKUP", "XLOOKUP")
+    For Each func In functionsToSearch
+        If InStr(1, UCase(activeBranchStr), UCase(func) & "(") > 0 Then
+            foundFunction = func
+            Exit For
+        End If
+    Next func
+    If Len(foundFunction) > 0 Then
+        TraceByParsing foundFunction, sourceCell
+    Else
+        TraceByArrows sourceCell
+    End If
+RestoreFormula:
+    sourceCell.Formula = originalFormula
+End Sub
+
+Private Sub TraceByParsing(ByVal aFunction As String, ByVal sourceCell As Range)
+    Dim allArgs As Variant, startChar As Long, instanceCount As Long, userChoice As Long, i As Long
+    instanceCount = (Len(UCase(sourceCell.Formula)) - Len(Replace(UCase(sourceCell.Formula), UCase(aFunction) & "(", ""))) / (Len(aFunction) + 1)
+    userChoice = 1
+    If instanceCount > 1 Then
+        On Error Resume Next
+        userChoice = Application.InputBox("Found " & instanceCount & " instances of " & aFunction & "." & vbCrLf & "Which one to trace? (1-" & instanceCount & ")", "Select Instance", Type:=1)
+        On Error GoTo 0
+        If userChoice < 1 Or userChoice > instanceCount Then Exit Sub
+    End If
+    startChar = InStr(1, sourceCell.Formula, aFunction & "(", vbTextCompare)
+    For i = 2 To userChoice
+        startChar = InStr(startChar + 1, sourceCell.Formula, aFunction & "(", vbTextCompare)
+    Next i
+    allArgs = ParseFormulaArguments(sourceCell.Formula, startChar)
+    If IsEmpty(allArgs) Then Exit Sub
+    Dim targetRange As Range
+    Set targetRange = GetTargetRange(aFunction, allArgs, sourceCell)
+    If Not targetRange Is Nothing Then
+        NavigateToCell targetRange
+    Else
+        MsgBox "Could not determine the precedent cell for this " & aFunction & ".", vbInformation
+    End If
+End Sub
+
+Private Sub TraceByArrows(ByVal sourceCell As Range)
+    Dim precedents() As PrecedentInfo, cntPrecedents As Long, reverseOrderRequired As Boolean, i As Long
+    On Error GoTo errcatch
+    cntPrecedents = 0: reverseOrderRequired = True
+    sourceCell.ShowPrecedents
+    Dim iArrowNum As Long, iLinkNum As Long, bLinksFoundForArrow As Boolean
+    iArrowNum = 1
+    Do
+        iLinkNum = 1: bLinksFoundForArrow = False
+        Do
+            Application.Goto sourceCell
+            On Error Resume Next
+            sourceCell.NavigateArrow TowardPrecedent:=True, ArrowNumber:=iArrowNum, LinkNumber:=iLinkNum
+            If Err.Number <> 0 Then On Error GoTo errcatch: Exit Do
+            On Error GoTo errcatch
+            If sourceCell.Address(External:=True) = ActiveCell.Address(External:=True) Then Exit Do
+            bLinksFoundForArrow = True: cntPrecedents = cntPrecedents + 1
+            If cntPrecedents = 1 And sourceCell.Worksheet.Name <> ActiveCell.Worksheet.Name Then reverseOrderRequired = False
+            ReDim Preserve precedents(1 To cntPrecedents)
+            precedents(cntPrecedents).Address = ActiveCell.Address(External:=True)
+            iLinkNum = iLinkNum + 1
+        Loop
+        If Not bLinksFoundForArrow Then Exit Do
+        iArrowNum = iArrowNum + 1
+    Loop
+    Application.Goto sourceCell
+    If cntPrecedents = 0 Then
+        sourceCell.Parent.ClearArrows
+        MsgBox "No precedents were found.", vbInformation
+        Exit Sub
+    End If
+    If cntPrecedents = 1 Then
+        NavigateToCell Application.Range(precedents(1).Address)
+    Else
+        Dim promptStr As String, displayNum As Long: displayNum = 1
+        If reverseOrderRequired Then
+            For i = cntPrecedents To 1 Step -1
+                promptStr = promptStr & vbNewLine & "  " & displayNum & ":  " & precedents(i).Address: displayNum = displayNum + 1
+            Next i
+        Else
+            For i = 1 To cntPrecedents
+                promptStr = promptStr & vbNewLine & "  " & displayNum & ":  " & precedents(i).Address: displayNum = displayNum + 1
+            Next i
+        End If
+        Dim userInput As String: userInput = InputBox("Found Precedents:" & promptStr & vbNewLine & vbNewLine & "Enter number to jump:", "GoTo Precedent")
+        If IsNumeric(userInput) And Len(userInput) > 0 Then
+            Dim choiceNum As Long: choiceNum = CLng(userInput)
+            If choiceNum > 0 And choiceNum <= cntPrecedents Then
+                Dim actualIndex As Long: actualIndex = IIf(reverseOrderRequired, cntPrecedents - choiceNum + 1, choiceNum)
+                NavigateToCell Application.Range(precedents(actualIndex).Address)
+            End If
+        End If
+    End If
+    sourceCell.Parent.ClearArrows
+    Exit Sub
+errcatch:
+    If Not sourceCell Is Nothing Then
+        On Error Resume Next: sourceCell.Parent.ClearArrows
+    End If
+    MsgBox "An error occurred in the arrow-based tracer: " & vbCrLf & Err.Description, vbCritical
+End Sub
+
+Private Sub TraceExternalNamedRange(ByVal sourceCell As Range)
+    Dim wbName As String, rangeName As String, targetRange As Range
+    wbName = ParseWbNameFromFormula(sourceCell.Formula)
+    rangeName = Mid(sourceCell.Formula, InStr(1, sourceCell.Formula, "!") + 1)
+    
+    If wbName <> "" And rangeName <> "" Then
+        On Error Resume Next
+        Set targetRange = Workbooks(wbName).Names(rangeName).RefersToRange
+        On Error GoTo 0
+        If Not targetRange Is Nothing Then
+            NavigateToCell targetRange
+        Else
+            MsgBox "Could not find the named range '" & rangeName & "' in " & wbName & ".", vbExclamation
+        End If
+    End If
+End Sub
+
+Private Function IsSimpleExternalNameFormula(ByVal formulaStr As String) As Boolean
+    If (UCase(formulaStr) Like "='*\[*]*'!*" Or UCase(formulaStr) Like "=*!*") And _
+       InStr(1, formulaStr, "(") = 0 Then
+        IsSimpleExternalNameFormula = True
+    End If
+End Function
+
+Private Function ShiftPressed() As Boolean
+    ShiftPressed = (GetKeyState(VK_SHIFT) And &H8000) <> 0
+End Function
+
+Private Function GetFormulaWithResolvedNames(ByVal sourceCell As Range) As String
+    Dim nm As Name, tempFormula As String
+    tempFormula = sourceCell.Formula
+    On Error Resume Next
+    For Each nm In Workbooks(varGoback_WB).Names
+        If InStr(1, tempFormula, nm.Name, vbTextCompare) > 0 Then
+            tempFormula = Replace(tempFormula, nm.Name, nm.RefersTo, 1, -1, vbTextCompare)
+        End If
+    Next nm
+    On Error GoTo 0
+    GetFormulaWithResolvedNames = tempFormula
+End Function
+
+Private Function GetFileNameFromPath(ByVal fullPath As String) As String
+    Dim pos As Long
+    pos = InStrRev(fullPath, Application.PathSeparator)
+    If InStrRev(fullPath, "/") > pos Then pos = InStrRev(fullPath, "/")
+    If pos > 0 Then GetFileNameFromPath = Mid(fullPath, pos + 1) Else GetFileNameFromPath = fullPath
+End Function
+
+Private Function IsWorkbookOpen(ByVal wbName As String) As Boolean
+    On Error Resume Next
+    IsWorkbookOpen = Not (Application.Workbooks(wbName) Is Nothing)
+    On Error GoTo 0
+End Function
+
+Private Function ParseWbNameFromFormula(ByVal formulaStr As String) As String
+    Dim startPos As Long, endPos As Long
+    startPos = InStr(1, formulaStr, "[")
+    If startPos > 0 Then
+        endPos = InStr(startPos, formulaStr, "]")
+        If endPos > 0 Then ParseWbNameFromFormula = Mid(formulaStr, startPos + 1, endPos - startPos - 1)
+    End If
+End Function
+
+Private Sub UnhideAllSheetsInWorkbook(ByVal wb As Workbook)
+    If wb Is Nothing Then Exit Sub
+    On Error Resume Next
+    Dim ws As Worksheet
+    For Each ws In wb.Worksheets
+        If ws.Visible <> xlSheetVisible Then
+            UnhiddenSheets.Add ws
+            ws.Visible = xlSheetVisible
+        End If
+    Next ws
+    On Error GoTo 0
+End Sub
+
+Private Sub RestoreHiddenSheets()
+    If UnhiddenSheets Is Nothing Then Exit Sub
+    On Error Resume Next
+    Dim ws As Worksheet
+    For Each ws In UnhiddenSheets
+        ws.Visible = False
+    Next ws
+    Set UnhiddenSheets = Nothing
+    On Error GoTo 0
+End Sub
+
+Private Function GetTargetRange(funcName As String, args As Variant, sourceCell As Range) As Range
+    On Error GoTo errcatch
+    Dim lookupValue As Variant, tableArray As Range, rowIndex As Variant, colIndex As Variant, matchPos As Variant
+    Select Case UCase(funcName)
+        Case "INDEX"
+            Set tableArray = ResolvePath(CStr(args(0)), sourceCell): If tableArray Is Nothing Then Exit Function
+            rowIndex = Application.Evaluate(args(1)): If IsError(rowIndex) Then Exit Function
+            colIndex = 1
+            If UBound(args) >= 2 And Len(CStr(args(2))) > 0 Then
+                colIndex = Application.Evaluate(args(2)): If IsError(colIndex) Then Exit Function
+            End If
+            Set GetTargetRange = tableArray.Cells(CLng(rowIndex), CLng(colIndex))
+        Case "VLOOKUP"
+            lookupValue = Application.Evaluate(args(0)): If IsError(lookupValue) Then Exit Function
+            Set tableArray = ResolvePath(CStr(args(1)), sourceCell): If tableArray Is Nothing Then Exit Function
+            colIndex = Application.Evaluate(args(2)): If IsError(colIndex) Then Exit Function
+            matchPos = Application.Match(lookupValue, tableArray.Columns(1), 0)
+            If Not IsError(matchPos) Then Set GetTargetRange = tableArray.Cells(matchPos, colIndex)
+        Case "HLOOKUP"
+            lookupValue = Application.Evaluate(args(0)): If IsError(lookupValue) Then Exit Function
+            Set tableArray = ResolvePath(CStr(args(1)), sourceCell): If tableArray Is Nothing Then Exit Function
+            rowIndex = Application.Evaluate(args(2)): If IsError(rowIndex) Then Exit Function
+            matchPos = Application.Match(lookupValue, tableArray.Rows(1), 0)
+            If Not IsError(matchPos) Then Set GetTargetRange = tableArray.Cells(rowIndex, matchPos)
+        Case "XLOOKUP"
+            Dim lookupArray As Range, returnArray As Range
+            lookupValue = Application.Evaluate(args(0)): If IsError(lookupValue) Then Exit Function
+            Set lookupArray = ResolvePath(CStr(args(1)), sourceCell): If lookupArray Is Nothing Then Exit Function
+            Set returnArray = ResolvePath(CStr(args(2)), sourceCell): If returnArray Is Nothing Then Exit Function
+            matchPos = Application.Match(lookupValue, lookupArray, 0)
+            If Not IsError(matchPos) Then Set GetTargetRange = returnArray.Cells(matchPos)
+    End Select
+errcatch:
+End Function
+
+Private Function ParseFormulaArguments(formulaStr As String, startChar As Long) As Variant
+    Dim args() As String, level As Long, i As Long, currentArgStart As Long, argCount As Long, inQuote As Boolean, openParenPos As Long
+    level = 0: argCount = 0: inQuote = False
+    openParenPos = InStr(startChar, formulaStr, "(")
+    If openParenPos = 0 Then Exit Function
+    currentArgStart = openParenPos + 1
+    For i = currentArgStart To Len(formulaStr)
+        Dim char As String: char = Mid(formulaStr, i, 1)
+        If char = """" Then inQuote = Not inQuote
+        If inQuote Then GoTo NextChar
+        Select Case char
+            Case "(": level = level + 1
+            Case ",":
+                If level = 0 Then
+                    ReDim Preserve args(argCount): args(argCount) = Trim(Mid(formulaStr, currentArgStart, i - currentArgStart))
+                    currentArgStart = i + 1: argCount = argCount + 1
+                End If
+            Case ")":
+                If level = 0 Then
+                    ReDim Preserve args(argCount): args(argCount) = Trim(Mid(formulaStr, currentArgStart, i - currentArgStart))
+                    ParseFormulaArguments = args
+                    Exit Function
+                Else: level = level - 1
+                End If
+        End Select
+NextChar:
+    Next i
+End Function
+
+Private Function ResolvePath(pathStr As String, contextCell As Range) As Range
+    On Error Resume Next
+    Dim targetRange As Range
+    If InStr(pathStr, "!") > 0 Then
+        ' This is the new logic for external named ranges
+        Dim wbName As String, rangeName As String
+        wbName = ParseWbNameFromFormula(pathStr)
+        If wbName <> "" Then
+            rangeName = Mid(pathStr, InStr(1, pathStr, "!") + 1)
+            ' Strip quotes that Excel adds around sheet names with spaces
+            rangeName = Replace(rangeName, "'", "")
+            Set targetRange = Workbooks(wbName).Names(rangeName).RefersToRange
+        End If
+        ' If it wasn't a named range, fall back to Application.Range
+        If targetRange Is Nothing Then Set targetRange = Application.Range(pathStr)
+    Else
+        Set targetRange = contextCell.Worksheet.Range(pathStr)
+    End If
+    If Err.Number <> 0 Then
+        Err.Clear: Set targetRange = Application.Range(pathStr)
+    End If
+    On Error GoTo 0
+    Set ResolvePath = targetRange
+End Function
+
+Private Sub NavigateToCell(ByVal target As Range)
+    If target Is Nothing Then Exit Sub
+    Dim isVisible As Boolean
+    target.Worksheet.Parent.Activate
+    target.Worksheet.Activate
+    On Error Resume Next
+    isVisible = Not (Application.Intersect(target, ActiveWindow.VisibleRange) Is Nothing)
+    On Error GoTo 0
+    Application.Goto Reference:=target, Scroll:=(Not isVisible)
+    ActiveCell.Activate
+End Sub
