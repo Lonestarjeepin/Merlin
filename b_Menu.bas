@@ -373,7 +373,7 @@ Dim cbcCustomChartMenu As CommandBarControl
 
         
             With cbcCustomMenu.Controls.Add(Type:=msoControlButton)
-                .Caption = "Percent Variance (Ctrl+Shft+V)"
+                .Caption = "Percent Variance (Ctrl + Shft V)"
                 .OnAction = "Variance_Percent"
             End With
             
@@ -383,8 +383,8 @@ Dim cbcCustomChartMenu As CommandBarControl
             End With
             
             With cbcCustomMenu.Controls.Add(Type:=msoControlButton)
-                .Caption = "GoTo Precedent/Index (Ctrl + Shft X)"
-                .OnAction = "IndexTrace"
+                .Caption = "Trace Precedents (Ctrl + Shft X)"
+                .OnAction = "TracePrecedents"
             End With
             
             With cbcCustomMenu.Controls.Add(Type:=msoControlButton)
@@ -428,7 +428,7 @@ Dim cbcCustomChartMenu As CommandBarControl
 '            End With
             
 '            With .Controls.Add(Type:=msoControlButton)
-'                .Caption = "Toggle Smart View (Ctrl + Shft + V)"
+'                .Caption = "Toggle Smart View (Ctrl + Shft V)"
 '                .OnAction = "toggle_SmartView"
 '            End With
 '        End With 'end sub-menu
