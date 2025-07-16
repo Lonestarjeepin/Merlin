@@ -28,7 +28,6 @@ Alias "QueryPerformanceFrequency" (cyFrequency As Currency) As LongPtr
 Private Declare PtrSafe Function getTickCount Lib "kernel32" _
 Alias "QueryPerformanceCounter" (cyTickCount As Currency) As LongPtr
 
-
 '***** For Scale Chart *****
 Public Type scaleAxisScale
   ' Calculated Axis Scale Parameters
@@ -311,7 +310,7 @@ End Sub
 
 Sub transparent_chart()
     With ActiveChart
-        .ChartArea.Border.LineStyle = xlNone
+        .ChartArea.border.LineStyle = xlNone
         .ChartArea.Format.Fill.Visible = msoFalse
         .PlotArea.Format.Fill.Visible = msoFalse
     End With
@@ -903,7 +902,333 @@ Concatenate_Text = Trim(str_text)
 End Function
 
 
-Option Explicit
+
+
+
+'******************************************************************************************************
+'*****   This procedure highlights the cells that contribute to the result of a                   *****
+'*****   SUMIF, COUNTIF, SUMIFS, or COUNTIFS formula.                                             *****
+'*****   It now toggles: run once to highlight, run again to restore original formatting.         *****
+'******************************************************************************************************
+
+Public Sub HighlightContributingCells()
+    Dim formulaCell As Range
+    Dim formulaText As String
+    Dim formulaName As String
+    Dim formulaArgsRaw As String
+    Dim formulaParts() As String
+    Dim existingState As Name
+
+    ' --- 1. CHECK FOR EXISTING HIGHLIGHT TO TOGGLE OFF ---
+    On Error Resume Next
+    Set existingState = ActiveWorkbook.Names("_HighlightingState")
+    On Error GoTo 0
+
+    If Not existingState Is Nothing Then
+        ' A highlight is active. Restore the original formatting and exit.
+        RestoreFormatting existingState
+        Exit Sub
+    End If
+
+    ' --- 2. VALIDATE THE SELECTION FOR A NEW HIGHLIGHT ---
+    On Error Resume Next
+    Set formulaCell = ActiveCell
+    On Error GoTo 0
+
+    If formulaCell Is Nothing Then MsgBox "Please select a cell first.", vbInformation: Exit Sub
+    If formulaCell.CountLarge > 1 Then MsgBox "Please select a single cell.", vbInformation: Exit Sub
+    If Not formulaCell.HasFormula Then MsgBox "The selected cell does not contain a formula.", vbExclamation: Exit Sub
+
+    ' --- 3. PARSE THE FORMULA & ROUTE TO CORRECT HELPER ---
+    formulaText = formulaCell.Formula
+    formulaName = UCase(Split(formulaText, "(")(0))
+    formulaName = Mid(formulaName, InStr(formulaName, "=") + 1)
+    
+    Dim startPos As Long
+    startPos = InStr(1, formulaText, "(") + 1
+    formulaArgsRaw = Mid(formulaText, startPos, Len(formulaText) - startPos)
+    formulaParts = Split(formulaArgsRaw, ",")
+
+    Select Case formulaName
+        Case "COUNTIF": Process_COUNTIF formulaParts, formulaCell
+        Case "SUMIF": Process_SUMIF formulaParts, formulaCell
+        Case "COUNTIFS": Process_COUNTIFS formulaParts, formulaCell
+        Case "SUMIFS": Process_SUMIFS formulaParts, formulaCell
+        Case Else: MsgBox "The formula is not a supported type.", vbExclamation
+    End Select
+End Sub
+
+'================================================================================
+'==                      DEDICATED FUNCTION PROCESSORS                         ==
+'================================================================================
+
+Private Sub Process_COUNTIF(ByRef formulaParts() As String, ByRef formulaCell As Range)
+    On Error GoTo ErrorHandler
+    Dim criteriaRange As Range, savedCells As Object, i As Long, criteriaValue As Variant, op As String
+    Set savedCells = CreateObject("Scripting.Dictionary")
+    Set criteriaRange = formulaCell.Parent.Range(Trim(formulaParts(0)))
+    ParseCriterion Trim(formulaParts(1)), op, criteriaValue, formulaCell
+    For i = 1 To criteriaRange.Rows.Count
+        If MeetsCondition(criteriaRange.Cells(i, 1).Value2, op, criteriaValue) Then
+            AddCellsToSaveList savedCells, criteriaRange.Rows(i)
+            With criteriaRange.Rows(i)
+                .Interior.Color = RGB(181, 230, 163)
+                .Font.Color = vbBlack
+            End With
+        End If
+    Next i
+    If savedCells.Count > 0 Then SaveFormattingState savedCells, formulaCell.Worksheet
+    Exit Sub
+ErrorHandler:
+    MsgBox "Could not process the COUNTIF formula.", vbCritical
+End Sub
+
+Private Sub Process_SUMIF(ByRef formulaParts() As String, ByRef formulaCell As Range)
+    On Error GoTo ErrorHandler
+    Dim critRng As Range, sumRng As Range, savedCells As Object, i As Long, critVal As Variant, op As String
+    Set savedCells = CreateObject("Scripting.Dictionary")
+    Set critRng = formulaCell.Parent.Range(Trim(formulaParts(0)))
+    ParseCriterion Trim(formulaParts(1)), op, critVal, formulaCell
+    If UBound(formulaParts) >= 2 Then Set sumRng = formulaCell.Parent.Range(Trim(formulaParts(2))) Else Set sumRng = critRng
+    For i = 1 To critRng.Rows.Count
+        If MeetsCondition(critRng.Cells(i, 1).Value2, op, critVal) Then
+            AddCellsToSaveList savedCells, critRng.Rows(i)
+            AddCellsToSaveList savedCells, sumRng.Rows(i)
+            With critRng.Rows(i)
+                .Interior.Color = RGB(181, 230, 163)
+                .Font.Color = vbBlack
+            End With
+            With sumRng.Rows(i)
+                .Interior.Color = RGB(181, 230, 163)
+                .Font.Color = vbBlack
+            End With
+        End If
+    Next i
+    If savedCells.Count > 0 Then SaveFormattingState savedCells, formulaCell.Worksheet
+    Exit Sub
+ErrorHandler:
+    MsgBox "Could not process the SUMIF formula.", vbCritical
+End Sub
+
+Private Sub Process_COUNTIFS(ByRef formulaParts() As String, ByRef formulaCell As Range)
+    On Error GoTo ErrorHandler
+    Dim critRanges As New Collection, ops As New Collection, vals As New Collection
+    Dim tempOp As String, tempVal As Variant, i As Long, savedCells As Object
+    Set savedCells = CreateObject("Scripting.Dictionary")
+    For i = 0 To UBound(formulaParts) Step 2
+        critRanges.Add formulaCell.Parent.Range(Trim(formulaParts(i)))
+        ParseCriterion Trim(formulaParts(i + 1)), tempOp, tempVal, formulaCell
+        ops.Add tempOp
+        vals.Add tempVal
+    Next i
+    Dim rowNum As Long, critNum As Long, allMet As Boolean
+    For rowNum = 1 To critRanges(1).Rows.Count
+        allMet = True
+        For critNum = 1 To critRanges.Count
+            If Not MeetsCondition(critRanges(critNum).Cells(rowNum, 1).Value2, ops(critNum), vals(critNum)) Then
+                allMet = False: Exit For
+            End If
+        Next critNum
+        If allMet Then
+            For critNum = 1 To critRanges.Count
+                AddCellsToSaveList savedCells, critRanges(critNum).Rows(rowNum)
+            Next critNum
+            For critNum = 1 To critRanges.Count
+                With critRanges(critNum).Rows(rowNum)
+                    .Interior.Color = RGB(181, 230, 163)
+                    .Font.Color = vbBlack
+                End With
+            Next critNum
+        End If
+    Next rowNum
+    If savedCells.Count > 0 Then SaveFormattingState savedCells, formulaCell.Worksheet
+    Exit Sub
+ErrorHandler:
+    MsgBox "Could not process the COUNTIFS formula.", vbCritical
+End Sub
+
+Private Sub Process_SUMIFS(ByRef formulaParts() As String, ByRef formulaCell As Range)
+    On Error GoTo ErrorHandler
+    Dim sumRng As Range, savedCells As Object
+    Set savedCells = CreateObject("Scripting.Dictionary")
+    Set sumRng = formulaCell.Parent.Range(Trim(formulaParts(0)))
+    Dim critRanges As New Collection, ops As New Collection, vals As New Collection
+    Dim tempOp As String, tempVal As Variant, i As Long
+    For i = 1 To UBound(formulaParts) Step 2
+        critRanges.Add formulaCell.Parent.Range(Trim(formulaParts(i)))
+        ParseCriterion Trim(formulaParts(i + 1)), tempOp, tempVal, formulaCell
+        ops.Add tempOp
+        vals.Add tempVal
+    Next i
+    Dim rowNum As Long, critNum As Long, allMet As Boolean
+    For rowNum = 1 To critRanges(1).Rows.Count
+        allMet = True
+        For critNum = 1 To critRanges.Count
+            If Not MeetsCondition(critRanges(critNum).Cells(rowNum, 1).Value2, ops(critNum), vals(critNum)) Then
+                allMet = False: Exit For
+            End If
+        Next critNum
+        If allMet Then
+            AddCellsToSaveList savedCells, sumRng.Rows(rowNum)
+            With sumRng.Rows(rowNum)
+                .Interior.Color = RGB(181, 230, 163)
+                .Font.Color = vbBlack
+            End With
+            For critNum = 1 To critRanges.Count
+                AddCellsToSaveList savedCells, critRanges(critNum).Rows(rowNum)
+                With critRanges(critNum).Rows(rowNum)
+                    .Interior.Color = RGB(181, 230, 163)
+                    .Font.Color = vbBlack
+                End With
+            Next critNum
+        End If
+    Next rowNum
+    If savedCells.Count > 0 Then SaveFormattingState savedCells, formulaCell.Worksheet
+    Exit Sub
+ErrorHandler:
+    MsgBox "Could not process the SUMIFS formula.", vbCritical
+End Sub
+
+'================================================================================
+'==                          HELPER FUNCTIONS                                  ==
+'================================================================================
+
+Private Sub AddCellsToSaveList(ByRef savedCells As Object, ByVal rng As Range)
+    Dim cell As Range, formatString As String, border As border, borderString As String, borderIndex As Variant
+    For Each cell In rng.Cells
+        If Not savedCells.Exists(cell.Address) Then
+            formatString = cell.Interior.Color & "/" & cell.Interior.Pattern & "/" & cell.Font.Color
+            For Each borderIndex In Array(xlEdgeTop, xlEdgeBottom, xlEdgeLeft, xlEdgeRight)
+                Set border = cell.Borders(borderIndex)
+                If border.LineStyle <> xlNone Then
+                    borderString = border.LineStyle & "," & border.Weight & "," & border.Color
+                Else
+                    borderString = "0" ' Use 0 as a shortcut for no border
+                End If
+                formatString = formatString & "/" & borderString
+            Next borderIndex
+            savedCells.Add cell.Address, formatString
+        End If
+    Next cell
+End Sub
+
+Private Sub SaveFormattingState(ByVal savedCells As Object, ByRef ws As Worksheet)
+    Dim stateBuilder As String, key As Variant
+    For Each key In savedCells.Keys
+        stateBuilder = stateBuilder & key & "~" & savedCells(key) & "|"
+    Next key
+    stateBuilder = Left(stateBuilder, Len(stateBuilder) - 1)
+    Dim fullState As String
+    fullState = ws.Index & "!" & stateBuilder ' Use sheet index for robustness
+    On Error Resume Next
+    ActiveWorkbook.Names.Add Name:="_HighlightingState", RefersTo:="=""" & fullState & """", Visible:=False
+    On Error GoTo 0
+End Sub
+
+Private Sub RestoreFormatting(ByVal stateName As Name)
+    Dim fullState As String, dataString As String, sheetId As String, ws As Worksheet
+    Dim records() As String, record As Variant, cellData() As String, targetCell As Range
+    fullState = Mid(stateName.Value, 2)
+    fullState = Mid(fullState, 2, Len(fullState) - 2)
+    If InStr(1, fullState, "!") = 0 Then stateName.Delete: Exit Sub
+    On Error Resume Next
+    sheetId = Split(fullState, "!")(0)
+    Set ws = ActiveWorkbook.Worksheets(CLng(sheetId))
+    If ws Is Nothing Then stateName.Delete: Exit Sub
+    On Error GoTo 0
+    records = Split(Split(fullState, "!")(1), "|")
+    For Each record In records
+        cellData = Split(record, "~")
+        Set targetCell = ws.Range(cellData(0))
+        Dim coreFormats() As String, borderFormats() As String, border As border, borderIndex As Variant, i As Long
+        coreFormats = Split(cellData(1), "/")
+        With targetCell
+            .Interior.Color = CLng(coreFormats(0))
+            .Interior.Pattern = CLng(coreFormats(1))
+            .Font.Color = CLng(coreFormats(2))
+        End With
+        i = 0
+        For Each borderIndex In Array(xlEdgeTop, xlEdgeBottom, xlEdgeLeft, xlEdgeRight)
+            Set border = targetCell.Borders(borderIndex)
+            borderFormats = Split(coreFormats(3 + i), ",")
+            If borderFormats(0) = "0" Then
+                border.LineStyle = xlNone
+            Else
+                border.LineStyle = CLng(borderFormats(0))
+                border.Weight = CLng(borderFormats(1))
+                border.Color = CLng(borderFormats(2))
+            End If
+            i = i + 1
+        Next borderIndex
+    Next record
+    stateName.Delete
+End Sub
+
+Private Sub ParseCriterion(ByVal RawCriterion As String, ByRef Operator As String, ByRef Value As Variant, ByRef ContextCell As Range)
+    Dim ProcessedCriterion As Variant
+    RawCriterion = Trim(RawCriterion)
+    On Error Resume Next
+    ProcessedCriterion = ContextCell.Parent.Evaluate(RawCriterion)
+    If Err.Number <> 0 Then Err.Clear: ProcessedCriterion = RawCriterion
+    On Error GoTo 0
+    Dim critString As String: critString = CStr(ProcessedCriterion)
+    If Left(critString, 1) = """" And Right(critString, 1) = """" Then critString = Mid(critString, 2, Len(critString) - 2)
+    Select Case Left(critString, 2)
+        Case ">=", "<=", "<>": Operator = Left(critString, 2): Value = Trim(Mid(critString, 3))
+        Case Else
+            Select Case Left(critString, 1)
+                Case ">", "<", "=": Operator = Left(critString, 1): Value = Trim(Mid(critString, 2))
+                Case Else: Operator = "=": Value = critString
+            End Select
+    End Select
+End Sub
+
+Private Function MeetsCondition(ByVal CellValue As Variant, ByVal op As String, ByVal critVal As Variant) As Boolean
+    If IsEmpty(CellValue) Then CellValue = 0
+    If (op = "=" Or op = "<>") And (InStr(1, CStr(critVal), "*") > 0 Or InStr(1, CStr(critVal), "?") > 0) Then
+        If op = "=" Then MeetsCondition = (CStr(CellValue) Like CStr(critVal)) Else MeetsCondition = Not (CStr(CellValue) Like CStr(critVal))
+        Exit Function
+    End If
+    Dim isNum As Boolean: isNum = IsNumeric(CellValue) And IsNumeric(critVal)
+    On Error Resume Next
+    Select Case op
+        Case "=": If isNum Then MeetsCondition = (CDbl(CellValue) = CDbl(critVal)) Else MeetsCondition = (LCase(CStr(CellValue)) = LCase(CStr(critVal)))
+        Case ">": If isNum Then MeetsCondition = (CDbl(CellValue) > CDbl(critVal)) Else MeetsCondition = (LCase(CStr(CellValue)) > LCase(CStr(critVal)))
+        Case "<": If isNum Then MeetsCondition = (CDbl(CellValue) < CDbl(critVal)) Else MeetsCondition = (LCase(CStr(CellValue)) < LCase(CStr(critVal)))
+        Case ">=": If isNum Then MeetsCondition = (CDbl(CellValue) >= CDbl(critVal)) Else MeetsCondition = (LCase(CStr(CellValue)) >= LCase(CStr(critVal)))
+        Case "<=": If isNum Then MeetsCondition = (CDbl(CellValue) <= CDbl(critVal)) Else MeetsCondition = (LCase(CStr(CellValue)) <= LCase(CStr(critVal)))
+        Case "<>": If isNum Then MeetsCondition = (CDbl(CellValue) <> CDbl(critVal)) Else MeetsCondition = (LCase(CStr(CellValue)) <> LCase(CStr(critVal)))
+    End Select
+    On Error GoTo 0
+End Function
+
+'================================================================================
+'==                        UTILITY SUBROUTINES                                 ==
+'================================================================================
+
+Public Sub ClearAllHighlighting()
+    If MsgBox("Clear all cell highlighting from this sheet?", vbQuestion + vbYesNo) = vbYes Then
+        ActiveSheet.Cells.Interior.ColorIndex = xlNone
+        ActiveSheet.Cells.Font.ColorIndex = xlAutomatic
+        ActiveSheet.Cells.Borders.LineStyle = xlNone
+        On Error Resume Next
+        ActiveWorkbook.Names("_HighlightingState").Delete
+        On Error GoTo 0
+    End If
+End Sub
+
+'***************************************************************************************************************************
+'***************************************************************************************************************************
+'**********************                    End of HighlightContributingCells                  ******************************
+'***************************************************************************************************************************
+'***************************************************************************************************************************
+
+
+
+
+
+
+
 
 
 Sub ListLinks()
@@ -2113,284 +2438,3 @@ End Sub
 '**********************************************************************************************************************
 '**********************************************************************************************************************
 '**********************************************************************************************************************
-
-Sub HighlightContributingCells()
-    Dim formulaCell As Range
-    Dim formulaText As String
-    Dim sumRange As Range
-    Dim criteriaRange As Range
-    Dim criteriaRanges() As Range
-    Dim criteriaOperators() As String
-    Dim criteriaValues() As String
-    Dim cell As Range
-    Dim formulaParts() As String
-    Dim i As Long, j As Long, k As Long
-    Dim sumRangeAddress As String
-    Dim criteriaRangeAddress As String
-    Dim criteria As String
-    Dim operatorPos As Long
-    Dim comparisonOperator As String
-    Dim criteriaValue As String
-    Dim validCriteria As Boolean
-    Dim isSUMIF As Boolean
-    Dim isCOUNTIF As Boolean
-    
-    ' Get user input for the formula cell
-    On Error Resume Next
-    Set formulaCell = Application.InputBox("Select the cell containing the SUMIF/SUMIFS/COUNTIF/COUNTIFS formula:", Type:=8)
-    On Error GoTo 0
-    If formulaCell Is Nothing Then Exit Sub
-    
-    ' Extract formula text
-    formulaText = formulaCell.Formula
-    
-    ' Debug: Print formula text
-    Debug.Print "Formula Text: " & formulaText
-    
-    ' Check if the formula is SUMIF, SUMIFS, COUNTIF, or COUNTIFS
-    isSUMIF = InStr(formulaText, "SUMIF(") > 0 And InStr(formulaText, "SUMIFS(") = 0
-    isCOUNTIF = InStr(formulaText, "COUNTIF(") > 0 And InStr(formulaText, "COUNTIFS(") = 0
-    
-    If isSUMIF Or isCOUNTIF Then
-        ' Handle SUMIF or COUNTIF
-        formulaParts = Split(Mid(formulaText, InStr(1, formulaText, "(") + 1, Len(formulaText) - InStr(1, formulaText, "(") - 1), ",")
-        
-        ' Extract criteria range (first argument)
-        criteriaRangeAddress = Trim(formulaParts(0))
-        Set criteriaRange = Range(criteriaRangeAddress)
-        ' Debug: Print criteria range address
-        Debug.Print "Criteria Range: " & criteriaRange.Address
-        
-        ' Extract criteria (second argument)
-        criteria = Trim(formulaParts(1))
-        criteria = Replace(criteria, """", "")
-        
-        ' Extract sum range (third argument, optional for SUMIF)
-        If isSUMIF And UBound(formulaParts) >= 2 Then
-            sumRangeAddress = Trim(formulaParts(2))
-            Set sumRange = Range(sumRangeAddress)
-        Else
-            Set sumRange = criteriaRange
-        End If
-        ' Debug: Print sum range address
-        Debug.Print "Sum Range: " & sumRange.Address
-        
-        ' Identify and extract the comparison operator and criteria value
-        If Left(criteria, 2) = "<>" Or Left(criteria, 2) = "<=" Or Left(criteria, 2) = ">=" Then
-            comparisonOperator = Left(criteria, 2)
-            criteriaValue = Mid(criteria, 3)
-        ElseIf Left(criteria, 1) = "=" Or Left(criteria, 1) = "<" Or Left(criteria, 1) = ">" Then
-            comparisonOperator = Left(criteria, 1)
-            criteriaValue = Mid(criteria, 2)
-        Else
-            comparisonOperator = "="
-            criteriaValue = criteria
-        End If
-        
-        ' Debug: Print comparison operator and criteria value
-        Debug.Print "Comparison Operator: " & comparisonOperator
-        Debug.Print "Criteria Value: " & criteriaValue
-        
-        ' Evaluate and highlight cells
-        For i = 1 To criteriaRange.Cells.Count
-            ' Compare values, considering both numeric and string comparisons
-            Select Case comparisonOperator
-                Case "="
-                    If IsNumeric(criteriaValue) Then
-                        If criteriaRange.Cells(i).Value = Val(criteriaValue) Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    Else
-                        If criteriaRange.Cells(i).Value = criteriaValue Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    End If
-                Case "<"
-                    If IsNumeric(criteriaValue) Then
-                        If criteriaRange.Cells(i).Value < Val(criteriaValue) Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    Else
-                        If criteriaRange.Cells(i).Value < criteriaValue Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    End If
-                Case ">"
-                    If IsNumeric(criteriaValue) Then
-                        If criteriaRange.Cells(i).Value > Val(criteriaValue) Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    Else
-                        If criteriaRange.Cells(i).Value > criteriaValue Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    End If
-                Case "<="
-                    If IsNumeric(criteriaValue) Then
-                        If criteriaRange.Cells(i).Value <= Val(criteriaValue) Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    Else
-                        If criteriaRange.Cells(i).Value <= criteriaValue Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    End If
-                Case ">="
-                    If IsNumeric(criteriaValue) Then
-                        If criteriaRange.Cells(i).Value >= Val(criteriaValue) Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    Else
-                        If criteriaRange.Cells(i).Value >= criteriaValue Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    End If
-                Case "<>"
-                    If IsNumeric(criteriaValue) Then
-                        If criteriaRange.Cells(i).Value <> Val(criteriaValue) Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    Else
-                        If criteriaRange.Cells(i).Value <> criteriaValue Then
-                            criteriaRange.Rows(i).Interior.Color = vbGreen
-                        End If
-                    End If
-            End Select
-        Next i
-    ElseIf InStr(formulaText, "SUMIFS(") > 0 Or InStr(formulaText, "COUNTIFS(") > 0 Then
-        ' Handle SUMIFS or COUNTIFS
-        formulaParts = Split(Mid(formulaText, InStr(1, formulaText, "(") + 1, Len(formulaText) - InStr(1, formulaText, "(") - 1), ",")
-        
-        ' Extract sum range (first argument for SUMIFS, not used for COUNTIFS)
-        If InStr(formulaText, "SUMIFS(") > 0 Then
-            sumRangeAddress = Trim(formulaParts(0))
-            Set sumRange = Range(sumRangeAddress)
-            ' Debug: Print sum range address
-            Debug.Print "Sum Range: " & sumRange.Address
-        Else
-            Set sumRange = Nothing
-        End If
-        
-        ' Initialize arrays
-        ReDim criteriaRanges((UBound(formulaParts) - 1) \ 2)
-        ReDim criteriaOperators((UBound(formulaParts) - 1) \ 2)
-        ReDim criteriaValues((UBound(formulaParts) - 1) \ 2)
-        
-        ' Extract criteria ranges and criteria values
-        For i = IIf(InStr(formulaText, "SUMIFS(") > 0, 1, 0) To UBound(formulaParts) Step 2
-            criteriaRangeAddress = Trim(formulaParts(i))
-            Set criteriaRanges((i - IIf(InStr(formulaText, "SUMIFS(") > 0, 1, 0)) \ 2) = Range(criteriaRangeAddress)
-            ' Debug: Print criteria range address
-            Debug.Print "Criteria Range: " & criteriaRanges((i - IIf(InStr(formulaText, "SUMIFS(") > 0, 1, 0)) \ 2).Address
-            
-            criteria = Trim(formulaParts(i + 1))
-            criteria = Replace(criteria, """", "")
-            
-            ' Identify and extract the comparison operator and criteria value
-            If Left(criteria, 2) = "<>" Or Left(criteria, 2) = "<=" Or Left(criteria, 2) = ">=" Then
-                comparisonOperator = Left(criteria, 2)
-                criteriaValue = Mid(criteria, 3)
-            ElseIf Left(criteria, 1) = "=" Or Left(criteria, 1) = "<" Or Left(criteria, 1) = ">" Then
-                comparisonOperator = Left(criteria, 1)
-                criteriaValue = Mid(criteria, 2)
-            Else
-                comparisonOperator = "="
-                criteriaValue = criteria
-            End If
-            
-            criteriaOperators((i - IIf(InStr(formulaText, "SUMIFS(") > 0, 1, 0)) \ 2) = comparisonOperator
-            criteriaValues((i - IIf(InStr(formulaText, "SUMIFS(") > 0, 1, 0)) \ 2) = criteriaValue
-            
-            ' Debug: Print comparison operator and criteria value
-            Debug.Print "Comparison Operator: " & comparisonOperator
-            Debug.Print "Criteria Value: " & criteriaValue
-        Next i
-        
-        ' Evaluate and highlight cells
-        For i = 1 To criteriaRanges(0).Cells.Count
-            validCriteria = True
-            For j = 0 To UBound(criteriaRanges)
-                Set criteriaRange = criteriaRanges(j)
-                comparisonOperator = criteriaOperators(j)
-                criteriaValue = criteriaValues(j)
-                
-                ' Compare values, considering both numeric and string comparisons
-                Select Case comparisonOperator
-                    Case "="
-                        If IsNumeric(criteriaValue) Then
-                            If Not criteriaRange.Cells(i).Value = Val(criteriaValue) Then
-                                validCriteria = False
-                            End If
-                        Else
-                            If Not criteriaRange.Cells(i).Value = criteriaValue Then
-                                validCriteria = False
-                            End If
-                        End If
-                    Case "<"
-                        If IsNumeric(criteriaValue) Then
-                            If Not criteriaRange.Cells(i).Value < Val(criteriaValue) Then
-                                validCriteria = False
-                            End If
-                        Else
-                            If Not criteriaRange.Cells(i).Value < criteriaValue Then
-                                validCriteria = False
-                            End If
-                        End If
-                    Case ">"
-                        If IsNumeric(criteriaValue) Then
-                            If Not criteriaRange.Cells(i).Value > Val(criteriaValue) Then
-                                validCriteria = False
-                            End If
-                        Else
-                            If Not criteriaRange.Cells(i).Value > criteriaValue Then
-                                validCriteria = False
-                            End If
-                        End If
-                    Case "<="
-                        If IsNumeric(criteriaValue) Then
-                            If Not criteriaRange.Cells(i).Value <= Val(criteriaValue) Then
-                                validCriteria = False
-                            End If
-                        Else
-                            If Not criteriaRange.Cells(i).Value <= criteriaValue Then
-                                validCriteria = False
-                            End If
-                        End If
-                    Case ">="
-                        If IsNumeric(criteriaValue) Then
-                            If Not criteriaRange.Cells(i).Value >= Val(criteriaValue) Then
-                                validCriteria = False
-                            End If
-                        Else
-                            If Not criteriaRange.Cells(i).Value >= criteriaValue Then
-                                validCriteria = False
-                            End If
-                        End If
-                    Case "<>"
-                        If IsNumeric(criteriaValue) Then
-                            If Not criteriaRange.Cells(i).Value <> Val(criteriaValue) Then
-                                validCriteria = False
-                            End If
-                        Else
-                            If Not criteriaRange.Cells(i).Value <> criteriaValue Then
-                                validCriteria = False
-                            End If
-                        End If
-                End Select
-                If Not validCriteria Then Exit For
-            Next j
-            If validCriteria Then
-                ' Highlight all columns in the evaluated row
-                For k = 0 To UBound(criteriaRanges)
-                    criteriaRanges(k).Rows(i).Interior.Color = vbGreen
-                Next k
-                If Not sumRange Is Nothing Then
-                    sumRange.Rows(i).Interior.Color = vbGreen
-                End If
-            End If
-        Next i
-    Else
-        MsgBox "The formula is not a SUMIF, SUMIFS, COUNTIF, or COUNTIFS formula. This code currently only supports SUMIF, SUMIFS, COUNTIF, and COUNTIFS."
-    End If
-    ' --- End of adaptation section ---
-End Sub
