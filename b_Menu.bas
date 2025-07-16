@@ -287,7 +287,7 @@ Dim cbcCustomChartMenu As CommandBarControl
             
             With .Controls.Add(Type:=msoControlButton)
                 .Caption = "Find Errors in Formulas"
-                .OnAction = "form_errors"
+                .OnAction = "Find_Formula_Errors"
             End With
             '''''''''''''''''''''''''''''''''''''''''''''
             'NEED TO UPDATE FOR WS VS. WB
