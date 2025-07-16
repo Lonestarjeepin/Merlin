@@ -14,6 +14,7 @@
 '    End If
 'End Sub
 
+
 'For "onChange"
 'Private Sub Worksheet_Change(ByVal Target As Range)
 '    If Not Intersect(Range("E8"), Target) Is Nothing Then
@@ -26,6 +27,7 @@ Private Declare PtrSafe Function getFrequency Lib "kernel32" _
 Alias "QueryPerformanceFrequency" (cyFrequency As Currency) As LongPtr
 Private Declare PtrSafe Function getTickCount Lib "kernel32" _
 Alias "QueryPerformanceCounter" (cyTickCount As Currency) As LongPtr
+
 
 '***** For Scale Chart *****
 Public Type scaleAxisScale
@@ -48,6 +50,13 @@ Public colHiddenWS As New Collection
 #Else
     Private Declare Function IsClipboardFormatAvailable Lib "user32" (ByVal wFormat As Long) As Long
 #End If
+
+
+
+
+
+
+
 
 Function ClipboardHasContent() As Boolean
     Dim i As Long
@@ -455,6 +464,9 @@ Sub Count_Worksheets()
 
 End Sub
 
+
+
+
 ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
 ' ExportToTextFile
 ' This exports a sheet or range to a text file, using a
@@ -524,14 +536,14 @@ End Sub
 ' then calls the ExportToTextFile procedure.
 ''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
 Sub ExportToDelimited()
-Dim Filename As Variant
+Dim fileName As Variant
 Dim Sep As String
 Dim AppendDataInput As LongPtr
 Dim AppendDataBool As Boolean
 Dim varSkipBlank As LongPtr
 Dim boolSkipBlank As Boolean
-Filename = Application.GetSaveAsFilename(InitialFileName:=vbNullString, filefilter:="Text Files (*.txt),*.txt")
-If Filename = False Then
+fileName = Application.GetSaveAsFilename(InitialFileName:=vbNullString, filefilter:="Text Files (*.txt),*.txt")
+If fileName = False Then
 ''''''''''''''''''''''''''
 ' user cancelled, get out
 ''''''''''''''''''''''''''
@@ -562,8 +574,8 @@ If varSkipBlank = vbYes Then
     boolSkipBlank = False
 End If
 
-Debug.Print "FileName: " & Filename, "Separator: " & Sep
-ExportToTextFile FName:=CStr(Filename), Sep:=CStr(Sep), AppendData:=AppendDataBool, SkipBlank:=boolSkipBlank
+Debug.Print "FileName: " & fileName, "Separator: " & Sep
+ExportToTextFile FName:=CStr(fileName), Sep:=CStr(Sep), AppendData:=AppendDataBool, SkipBlank:=boolSkipBlank
 End Sub
 
 Sub MRNETOPSUpload()
@@ -572,7 +584,7 @@ Application.ScreenUpdating = False
 Dim wb As Workbook
 Dim myFileName As String
 Dim filePath As String
-filePath = ActiveWorkbook.Path
+filePath = ActiveWorkbook.path
 Dim FileNm As String
 'FileNm = ActiveWorkbook.Name
 FileNm = Left(ActiveWorkbook.Name, (InStrRev(ActiveWorkbook.Name, ".", -1, vbTextCompare) - 1))
@@ -635,20 +647,6 @@ Sub DisableAutoRecover()
 
 End Sub
 
-Function ISNamedRange(strRangeName As String) As Boolean
-'Checks to see if a string is a valid named range in the workbook
-    Dim rngExists As String
-     
-    On Error Resume Next
-    rngExists = Names(strRangeName).Name
-    If Len(rngExists) = 0 Then
-    ISNamedRange = False
-    Else
-    ISNamedRange = True
-    End If
-    On Error GoTo 0
-     
-End Function
 
 Sub TableOfContents()
 Dim ws As Worksheet
@@ -684,45 +682,120 @@ MsgBox "Unable to create a table of contents. You may already have one."
 
 End Sub
 
-'Subroutine to find and display (in new sheet) all formulas with ERRORs in active sheet
-Sub form_errors()
-Dim s1 As String
-s1 = ActiveSheet.Name
-Dim rng, cell As Range
-Set rng = Sheets(s1).UsedRange.SpecialCells(xlCellTypeFormulas, xlErrors)
-Application.DisplayAlerts = False
-Select Case rng Is Nothing
-    Case False
+'Subroutine to find and display all formulas with errors.
+'Prompts user to scan the active worksheet or the entire workbook.
+Sub Find_Formula_Errors()
+
+    ' --- Variable Declarations ---
+    Dim wb As Workbook
+    Dim ws As Worksheet
+    Dim sheetsToScan As Collection
+    Dim resultsSht As Worksheet
+    Dim errorRng As Range
+    Dim cell As Range
+    Dim userChoice As VbMsgBoxResult
+    Dim resultsRow As Long
+    Const RESULTS_SHEET_NAME As String = "Formula Errors Report"
+
+    ' --- Initialization and Setup ---
+    Set wb = ActiveWorkbook
+    
+    ' Exit if no workbook is open to scan.
+    If wb Is Nothing Then
+        MsgBox "There is no active workbook to scan.", vbExclamation, "Action Canceled"
+        Exit Sub
+    End If
+    
+    Application.ScreenUpdating = False
+
+    ' --- Get User Input for Scan Scope ---
+    userChoice = MsgBox("Scan the entire workbook?" & vbCrLf & vbCrLf & _
+                        "• Yes = Scan all worksheets" & vbCrLf & _
+                        "• No = Scan only the active sheet" & vbCrLf & _
+                        "• Cancel = Exit", _
+                        vbYesNoCancel + vbQuestion, "Select Scan Scope")
+
+    If userChoice = vbCancel Then
+        Application.ScreenUpdating = True
+        Exit Sub
+    End If
+
+    ' --- Create a collection of worksheets to process ---
+    Set sheetsToScan = New Collection
+    If userChoice = vbYes Then 'Scan entire workbook
+        For Each ws In wb.Worksheets
+            'Avoid scanning a previous report sheet
+            If ws.Name <> RESULTS_SHEET_NAME Then
+                sheetsToScan.Add ws
+            End If
+        Next ws
+    Else 'Scan active sheet only
+        sheetsToScan.Add wb.ActiveSheet
+    End If
+
+    ' --- Prepare the Results Sheet ---
+    ' Delete old report sheet if it exists
+    Application.DisplayAlerts = False
+    On Error Resume Next
+    wb.Worksheets(RESULTS_SHEET_NAME).Delete
+    On Error GoTo 0
+    Application.DisplayAlerts = True
+    
+    ' Add a new sheet for the results and set up headers
+    Set resultsSht = wb.Worksheets.Add(After:=wb.Sheets(wb.Sheets.Count))
+    resultsSht.Name = RESULTS_SHEET_NAME
+    resultsRow = 1
+    
+    With resultsSht.Range("A1:D1")
+        .Value = Array("Worksheet", "Cell Address", "Formula", "Error Value")
+        .Font.Bold = True
+    End With
+
+    ' --- Main Processing Loop ---
+    For Each ws In sheetsToScan
+        ' Find all cells with formula errors in the current sheet
+        Set errorRng = Nothing 'Reset range for each sheet
         On Error Resume Next
-        Sheets(s1 & "_Invalid").Delete
+        Set errorRng = ws.UsedRange.SpecialCells(xlCellTypeFormulas, xlErrors)
         On Error GoTo 0
-        Sheets.Add After:=Sheets(s1)
-        ActiveSheet.Name = s1 & "_Invalid"
-        Sheets(s1 & "_Invalid").Select
-        
-        Cells(1, 1) = "Cell Address"
-        Cells(1, 2) = "Formula"
-        Cells(1, 3) = "Formula Result"
-        
-        varRow = 1
-        For Each cell In rng
-        varRow = varRow + 1
-        Debug.Print Rows.Count
-            Sheets(s1 & "_Invalid").Cells(Rows.Count, 1).End(xlUp).Offset(1, 0) = cell.Address
-            ActiveSheet.Hyperlinks.Add Anchor:=Cells(varRow, 1), Address:="", SubAddress:= _
-                            "'" & s1 & "'!" & cell.Address, TextToDisplay:=cell.Address
-            
-            
-            Sheets(s1 & "_Invalid").Cells(Rows.Count, 2).End(xlUp).Offset(1, 0) = Replace(cell.Formula, "=", "'")
-            Sheets(s1 & "_Invalid").Cells(Rows.Count, 3).End(xlUp).Offset(1, 0) = cell.Value
-        Next cell
-        
-End Select
 
-ActiveSheet.Range("A:C").Columns.EntireColumn.AutoFit
-Application.DisplayAlerts = True
+        If Not errorRng Is Nothing Then
+            For Each cell In errorRng
+                resultsRow = resultsRow + 1
+                
+                ' Column A: Worksheet Name
+                resultsSht.Cells(resultsRow, "A").Value = ws.Name
+                
+                ' Column B: Cell Address (with Hyperlink)
+                resultsSht.Hyperlinks.Add Anchor:=resultsSht.Cells(resultsRow, "B"), _
+                                           Address:="", _
+                                           SubAddress:="'" & ws.Name & "'!" & cell.Address, _
+                                           TextToDisplay:=cell.Address(External:=False)
+                
+                ' Column C: The formula as text
+                resultsSht.Cells(resultsRow, "C").Value = "'" & cell.Formula
+                
+                ' Column D: The resulting error value
+                ' *** FIX: Use .Text property to get the visible error string ***
+                resultsSht.Cells(resultsRow, "D").Value = cell.Text
+            Next cell
+        End If
+    Next ws
+
+    ' --- Finalization ---
+    If resultsRow > 1 Then 'If any errors were found
+        resultsSht.Columns("A:D").AutoFit
+        resultsSht.Activate
+    Else 'No errors found, so clean up
+        Application.DisplayAlerts = False
+        resultsSht.Delete
+        Application.DisplayAlerts = True
+        MsgBox "No formula errors were found in the selected scope.", vbInformation, "Scan Complete"
+    End If
+
+    Application.ScreenUpdating = True
+
 End Sub
-
 
 Sub CenterAcrossColumns()
     With Selection
@@ -830,72 +903,146 @@ Concatenate_Text = Trim(str_text)
 End Function
 
 
+Option Explicit
+
+
 Sub ListLinks()
-Application.ScreenUpdating = False
-Application.EnableCancelKey = xlDisabled
     
-    If IsEmpty(ActiveWorkbook.LinkSources) Then
-        msg = "This workbook does not contain any links!"
-        MsgBox msg
-        Exit Sub
+    Application.ScreenUpdating = False
+
+    Dim wb As Workbook
+    Dim wsResults As Worksheet
+    Dim wsToScan As Worksheet
+    Dim sheetsToScan As Collection
+    Dim linkSources As Variant
+    Dim source As Variant
+    Dim searchRange As Range
+    Dim foundCell As Range
+    Dim firstAddress As String
+    Dim fileName As String
+    Dim resultsRow As Long
+    Dim scopeChoice As VbMsgBoxResult
+    
+    Set wb = ActiveWorkbook
+    
+    'Check if any external links exist before proceeding
+    linkSources = wb.linkSources(xlExcelLinks)
+    If IsEmpty(linkSources) Then
+        MsgBox "This workbook does not contain any external links.", vbInformation, "No Links Found"
+        GoTo CleanUp
     End If
     
-    Sheets.Add.Name = "LinkList_" & Replace(Time, ":", ".")
-    Range("A1").Select
-    ActiveCell.Value = "Link FilePath"
-    ActiveCell.Offset(0, 1).Select
-    ActiveCell.Value = "Link FileName"
-    ActiveCell.Offset(0, 1).Select
-    ActiveCell.Value = "Reference Cell"
-    ActiveCell.Offset(0, 1).Select
-    ActiveCell.Value = "Ref Cell Formula"
-    ActiveCell.Offset(0, 1).Select
-    Range("A2").Select
+    'Ask user to define the scope: entire workbook or active sheet only
+    scopeChoice = MsgBox("Do you want to scan the entire workbook?" & vbCrLf & vbCrLf & _
+                         "   •  Click 'Yes' to scan all worksheets." & vbCrLf & _
+                         "   •  Click 'No' to scan only the active sheet.", _
+                         vbYesNoCancel, "Select Scan Scope")
 
-    varRow = 2
-    For Each lSource In ActiveWorkbook.LinkSources
-        Cells(varRow, 1).Value = lSource
-        'Repeated to be used to display only filename later in code
-        Cells(varRow, 2).Value = lSource
-        Range("B:B").Replace "*\", "", xlPart
-        varFileName = Cells(varRow, 2).Value
-        
-        For Each sh In ActiveWorkbook.Sheets
-        
-            Set rng1 = Nothing
-            Set rng2 = Nothing
-
-            On Error Resume Next
-            Set rng1 = sh.Cells.SpecialCells(xlCellTypeFormulas)
-            On Error GoTo 0
-            
-            If Not rng1 Is Nothing Then
-                 'look for *.xls
-                With rng1
-                    Set rng2 = .Find("*" & Replace(varFileName, "'", "''") & "*", LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, MatchCase:=False)
-                    If Not rng2 Is Nothing Then
-                        FirstAddress = sh.Name & "!" & rng2.Address
-                         'repeat till code loops back to first formula cell containing lSource
-                        Do
-                           Cells(varRow, 3).Value = sh.Name & "!" & rng2.Address
-                            ActiveSheet.Hyperlinks.Add Anchor:=Cells(varRow, 3), Address:="", SubAddress:= _
-                            "'" & sh.Name & "'!" & rng2.Address, TextToDisplay:=sh.Name & "!" & rng2.Address
+    Set sheetsToScan = New Collection
+    Select Case scopeChoice
+        Case vbYes
+            For Each wsToScan In wb.Worksheets
+                sheetsToScan.Add wsToScan
+            Next wsToScan
+        Case vbNo
+            sheetsToScan.Add wb.ActiveSheet
+        Case vbCancel
+            GoTo CleanUp
+    End Select
     
-                           Cells(varRow, 4).Value = "'" & rng2.Formula
-                           varRow = varRow + 1
-                           Set rng2 = .FindNext(rng2)
-                        Loop Until sh.Name & "!" & rng2.Address = FirstAddress
-                    End If
-                End With
-            End If
+    Set wsResults = wb.Sheets.Add(After:=wb.Sheets(wb.Sheets.Count))
+    wsResults.Name = "LinkList_" & Format(Now, "HH-mm-ss")
+    
+    With wsResults.Range("A1:D1")
+        .Value = Array("Link FilePath", "Link FileName", "Reference Cell", "Ref Cell Formula")
+        .Font.Bold = True
+    End With
+    
+    resultsRow = 2 'Start writing results from the second row
+    
+    'Loop through each external link source found in the workbook
+    For Each source In linkSources
+        fileName = GetFileName(CStr(source)) 'Extract just the filename from the full path
         
-        Next
-        varRow = varRow + 1
-    Next
-Columns("A:D").AutoFit
+        'Loop through the collection of sheets designated by the user
+        For Each wsToScan In sheetsToScan
+            'Ignore the results sheet to prevent self-referencing
+            If wsToScan.Name <> wsResults.Name Then
+                
+                'Isolate only cells with formulas
+                Set searchRange = Nothing
+                On Error Resume Next
+                Set searchRange = wsToScan.Cells.SpecialCells(xlCellTypeFormulas)
+                On Error GoTo 0
+                
+                If Not searchRange Is Nothing Then
+                    'Find the first cell containing the link's filename
+                    Set foundCell = searchRange.Find(What:=fileName, LookIn:=xlFormulas, LookAt:=xlPart)
+                    
+                    If Not foundCell Is Nothing Then
+                        firstAddress = foundCell.Address
+                        
+                        'Loop through all found cells until it circles back to the first one
+                        Do
+                            'Write link details to the results sheet
+                            wsResults.Cells(resultsRow, 1).Value = source
+                            wsResults.Cells(resultsRow, 2).Value = fileName
+                            
+                            'Add a hyperlink back to the source cell for easy navigation
+                            wsResults.Hyperlinks.Add Anchor:=wsResults.Cells(resultsRow, 3), _
+                                                     Address:="", _
+                                                     SubAddress:="'" & wsToScan.Name & "'!" & foundCell.Address, _
+                                                     TextToDisplay:=wsToScan.Name & "!" & foundCell.Address
+                                                     
+                            wsResults.Cells(resultsRow, 4).Value = "'" & foundCell.Formula
+                            
+                            resultsRow = resultsRow + 1
+                            
+                            'Find the next occurrence
+                            Set foundCell = searchRange.FindNext(foundCell)
+                            
+                        Loop While Not foundCell Is Nothing And foundCell.Address <> firstAddress
+                    End If
+                End If
+            End If
+        Next wsToScan
+    Next source
+    
+    'AutoFit columns for readability if any results were found
+    If resultsRow > 2 Then
+        wsResults.Columns("A:D").AutoFit
+    Else
+        'If no links were found within the specified scope, add a note
+        wsResults.Range("A2").Value = "No external links were found in the selected scope."
+    End If
+    
+    wsResults.Activate
 
-Application.ScreenUpdating = True
+'Re-enable screen updating and exit the sub
+CleanUp:
+    Application.ScreenUpdating = True
+    
 End Sub
+
+Private Function GetFileName(ByVal fullPath As String) As String
+    
+    Dim pos As Integer
+    
+    'Find the position of the last backslash or forward slash
+    pos = InStrRev(fullPath, "\")
+    If pos = 0 Then
+        pos = InStrRev(fullPath, "/")
+    End If
+    
+    'Extract the substring after the last slash
+    If pos > 0 Then
+        GetFileName = Mid(fullPath, pos + 1)
+    Else
+        'If no slash is found, the path itself is the filename
+        GetFileName = fullPath
+    End If
+    
+End Function
 
 
 
@@ -908,7 +1055,7 @@ Sub WorksheetSizes()
 
     sReport = "Size Report"
     sWBName = "Erase Me.xls"
-    sFullFile = ActiveWorkbook.Path & _
+    sFullFile = ActiveWorkbook.path & _
       Application.PathSeparator & sWBName
 
     ' Add new worksheet to record sizes
