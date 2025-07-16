@@ -138,12 +138,12 @@ Cells(r, 3) = "Wraps formula in ROUND(x,y).  Prompted for y decimals for roundin
 
 r = r + 1
 Cells(r, 1) = "     Increase Decimal"
-Cells(r, 2) = ""
+Cells(r, 2) = "Ctrl+Shft+I"
 Cells(r, 3) = "Adds a decimal place to number formatting."
 
 r = r + 1
 Cells(r, 1) = "     Decrease Decimal"
-Cells(r, 2) = ""
+Cells(r, 2) = "Ctrl+Shft+D"
 Cells(r, 3) = "Removes a decimal place from number formatting."
 
 
@@ -190,7 +190,7 @@ Cells(r, 3) = "Uses brute force to breaks password protection in protected Works
 r = r + 1
 Cells(r, 1) = "     Find Errors in Formulas"
 Cells(r, 2) = ""
-Cells(r, 3) = "Creates a hyperlinked list of all formulas on current Worksheet with Errors in them for easier cleanup."
+Cells(r, 3) = "Creates a hyperlinked list of all formulas with Errors in them for easier cleanup."
 
 r = r + 1
 Cells(r, 1) = "     Manage Hidden Objects"
@@ -200,7 +200,7 @@ Cells(r, 3) = "Lists all hidden objects in Workbook including worksheets, shapes
 r = r + 1
 Cells(r, 1) = "     List External Links"
 Cells(r, 2) = ""
-Cells(r, 3) = "Creates a hyperlinked list of all external links in Workbook for easier cleanup/management."
+Cells(r, 3) = "Creates a hyperlinked list of all external links for easier cleanup/management."
 
 r = r + 1
 Cells(r, 1) = "     Create Workbook Table of Contents"
@@ -336,6 +336,21 @@ Cells(r, 3) = "Description"
 Cells(r, 1).Font.Bold = True
 Cells(r, 2).Font.Bold = True
 Cells(r, 3).Font.Bold = True
+
+r = r + 1
+Cells(r, 1) = "TracePrecedents enhancements"
+Cells(r, 2) = "07.15.25"
+Cells(r, 3) = "Enhancements to allow IF, XLOOKUP, and HLOOKUP as well as fix for OneDrive linked files."
+
+r = r + 1
+Cells(r, 1) = "List Links"
+Cells(r, 2) = "07.15.25"
+Cells(r, 3) = "Enhancement to allow worksheet or workbook and fix for OneDrive links."
+
+r = r + 1
+Cells(r, 1) = "Find Formula Errors"
+Cells(r, 2) = "07.15.25"
+Cells(r, 3) = "Enhancement to allow worksheet or workbook."
 
 r = r + 1
 Cells(r, 1) = "bps formatting enhancement"
